@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+.uv-cache/
+
+# Node
+node_modules/
+dist/
+
+# Env
+.env
+.env.local
+keys.ts
+
+# Runtime data
+data/reports/*
+data/sessions/*
+!data/reports/.gitkeep
+!data/sessions/.gitkeep
+backend/data/
+*.stdout.log
+*.stderr.log
+
+# IDE / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
