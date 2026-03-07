@@ -1,9 +1,22 @@
+import { DebatePhase } from "../types";
+
 interface Props {
-  running: boolean;
+  phase: DebatePhase;
   secondsLeft: number;
 }
 
-export function Timer({ running, secondsLeft }: Props) {
+const phaseText: Record<DebatePhase, string> = {
+  idle: "待命",
+  booting: "初始化",
+  researching: "调研中",
+  assembling: "配置中",
+  debating: "辩论中",
+  summarizing: "总结中",
+  complete: "已完成",
+  error: "异常",
+};
+
+export function Timer({ phase, secondsLeft }: Props) {
   const m = Math.floor(Math.max(0, secondsLeft) / 60)
     .toString()
     .padStart(2, "0");
@@ -13,12 +26,11 @@ export function Timer({ running, secondsLeft }: Props) {
 
   return (
     <section className="timer">
-      <span className={running ? "dot live" : "dot"} />
-      <span>{running ? "进行中" : "未开始"}</span>
-      <strong>
-        {m}:{s}
-      </strong>
+      <div className="timer-label">
+        <span className={`dot ${phase === "debating" ? "live" : ""}`} />
+        <span>{phaseText[phase]}</span>
+      </div>
+      <strong>{phase === "debating" ? `${m}:${s}` : "--:--"}</strong>
     </section>
   );
 }
-
