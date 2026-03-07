@@ -17,15 +17,15 @@ class EmptySearch(SearchProvider):
 
 
 @pytest.mark.anyio
-async def test_debater_fallback_uses_topic_and_changes_across_turns():
+async def test_debater_fallback_uses_topic_signals_and_changes_across_turns():
     agent = DebaterAgent(
         config=DebaterConfig(
-            name="政策观察员 Zhou",
+            name="制度审慎派 Zhou",
             background="公共政策研究者",
             stance="对 AI 是否应该替代初级分析师的部分工作 持审慎监管态度",
-            personality="逻辑严谨、擅长追问边界条件",
+            personality="逻辑严谨，擅长追问边界条件和责任链",
             speaking_style="structured",
-            avatar_emoji="🏛️",
+            avatar_emoji="衡",
         ),
         llm=FailingLLM(),
         search=EmptySearch(),
@@ -48,7 +48,7 @@ async def test_debater_fallback_uses_topic_and_changes_across_turns():
     messages = [DebateMessage(speaker=agent.config.name, role="debater", content=first, turn_index=0)]
     messages.append(
         DebateMessage(
-            speaker="技术极客 Lin",
+            speaker="技术推进派 Lin",
             role="debater",
             content="如果自动化能提升效率，为什么不先推进？",
             turn_index=1,
@@ -62,8 +62,8 @@ async def test_debater_fallback_uses_topic_and_changes_across_turns():
     )
 
     assert "AI 是否应该替代初级分析师的部分工作" not in first
-    assert any(keyword in first for keyword in ["分析任务", "效率", "责任", "培养"])
-    assert "回应 技术极客 Lin" in second
+    assert any(keyword in first for keyword in ["效率", "责任", "成本", "标准", "培养"])
+    assert "Lin" in second
     assert first != second
 
 
@@ -71,12 +71,12 @@ async def test_debater_fallback_uses_topic_and_changes_across_turns():
 async def test_pragmatic_fallback_mentions_cost_or_exit_path():
     agent = DebaterAgent(
         config=DebaterConfig(
-            name="商业操盘手 Chen",
+            name="落地经营派 Chen",
             background="互联网产品负责人",
             stance="对 AI 是否应该替代初级分析师的部分工作 持务实落地态度",
-            personality="结果导向、善于算账、吐槽直接",
+            personality="结果导向，善于算账",
             speaking_style="blunt",
-            avatar_emoji="📈",
+            avatar_emoji="账",
         ),
         llm=FailingLLM(),
         search=EmptySearch(),
@@ -91,3 +91,37 @@ async def test_pragmatic_fallback_mentions_cost_or_exit_path():
     )
 
     assert any(keyword in text for keyword in ["成本", "止损", "责任"])
+
+
+@pytest.mark.anyio
+async def test_fallback_does_not_default_to_agreement_template():
+    agent = DebaterAgent(
+        config=DebaterConfig(
+            name="制度审慎派 Zhou",
+            background="公共政策研究者",
+            stance="对 AI 是否应该替代初级分析师的部分工作 持审慎监管态度",
+            personality="逻辑严谨，擅长追问边界条件和责任链",
+            speaking_style="structured",
+            avatar_emoji="衡",
+        ),
+        llm=FailingLLM(),
+        search=EmptySearch(),
+        context_manager=ContextManager(),
+    )
+
+    text, _ = await agent.produce_turn(
+        topic="AI 是否应该替代初级分析师的部分工作",
+        brief="- 自动化会影响团队的人力配置与培训成本\n- 需要定义错误责任与止损机制",
+        messages=[
+            DebateMessage(
+                speaker="技术推进派 Lin",
+                role="debater",
+                content="只要效率提升，就应该尽快替代低价值环节。",
+                turn_index=0,
+            )
+        ],
+        enable_search=False,
+    )
+
+    assert not text.startswith("我同意")
+    assert any(keyword in text for keyword in ["边界", "责任", "成本", "止损", "标准", "代价", "条件", "证据"])

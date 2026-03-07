@@ -47,6 +47,24 @@ class DebateOrchestrator:
         self.session_store.create(session)
 
         try:
+            yield SSEEvent(
+                event="phase",
+                data={
+                    "session_id": session.session_id,
+                    "phase": "booting",
+                    "title": "辩题已接收",
+                    "detail": "正在初始化主持人工作区与本轮会话。",
+                },
+            )
+            yield SSEEvent(
+                event="phase",
+                data={
+                    "session_id": session.session_id,
+                    "phase": "researching",
+                    "title": "主持人正在调研",
+                    "detail": "收集背景资料、争议焦点与可验证线索。",
+                },
+            )
             brief, references = await host.research_topic(request.topic)
             session.brief = brief
             self.session_store.update(session)
@@ -55,6 +73,15 @@ class DebateOrchestrator:
                 yield SSEEvent(event="host_research", data={"session_id": session.session_id, "chunk": chunk})
                 await asyncio.sleep(0.015)
 
+            yield SSEEvent(
+                event="phase",
+                data={
+                    "session_id": session.session_id,
+                    "phase": "assembling",
+                    "title": "正在配置辩手",
+                    "detail": "根据主持人研究结果生成角色、立场与发言策略。",
+                },
+            )
             debaters = await host.create_debaters(request.topic, request.debater_count, brief)
             session.debaters = debaters
             session.deadline_at = utc_now() + timedelta(seconds=request.time_limit_sec)
@@ -69,6 +96,15 @@ class DebateOrchestrator:
                     "time_limit_sec": request.time_limit_sec,
                     "max_turns": request.max_turns,
                     "deadline_at": session.deadline_at.isoformat(),
+                },
+            )
+            yield SSEEvent(
+                event="phase",
+                data={
+                    "session_id": session.session_id,
+                    "phase": "debating",
+                    "title": "辩手已就位",
+                    "detail": "倒计时开始，等待第一位辩手进入交锋。",
                 },
             )
 
@@ -127,6 +163,15 @@ class DebateOrchestrator:
                     )
                     turn_id += 1
 
+            yield SSEEvent(
+                event="phase",
+                data={
+                    "session_id": session.session_id,
+                    "phase": "summarizing",
+                    "title": "主持人正在总结",
+                    "detail": "收束分歧、整理证据，并生成最终报告。",
+                },
+            )
             report = await host.summarize_debate(request.topic, session.brief, session.messages, references)
             for chunk in chunk_text(report, chunk_size=44):
                 yield SSEEvent(event="host_summary", data={"session_id": session.session_id, "chunk": chunk})

@@ -23,7 +23,7 @@ class HostAgent:
     async def research_topic(self, topic: str) -> Tuple[str, List[SearchResult]]:
         queries = [
             topic,
-            f"{topic} 最新 争议",
+            f"{topic} 最新争议",
             f"{topic} 数据 研究 报告",
         ]
         all_results: List[SearchResult] = []
@@ -36,9 +36,7 @@ class HostAgent:
         if not all_results:
             return self._fallback_brief(topic), []
 
-        citations_text = "\n".join(
-            f"- {r.title}: {r.snippet[:160]} ({r.url})" for r in all_results[:9]
-        )
+        citations_text = "\n".join(f"- {r.title}: {r.snippet[:160]} ({r.url})" for r in all_results[:9])
         user_prompt = (
             f"话题：{topic}\n\n"
             f"请基于以下材料生成 500-800 字背景简报，要求中立、结构清晰。\n"
@@ -56,13 +54,14 @@ class HostAgent:
     async def create_debaters(self, topic: str, debater_count: int, brief: str) -> List[DebaterConfig]:
         user_prompt = (
             f"针对话题《{topic}》，设计 {debater_count} 位辩手。\n"
-            "请只返回 JSON 数组，字段: name, background, stance, personality, speaking_style, avatar_emoji。\n"
+            "请只返回 JSON 数组，字段为 name, background, stance, personality, speaking_style, avatar_emoji。\n"
             "要求：\n"
-            "1. 立场差异明显，但都必须像真实社会中的利益相关方或分析者，而不是网络骂战选手。\n"
-            "2. 分歧要来自利益位置、风险偏好、制度约束、价值排序或分析框架，而不是单纯情绪对立。\n"
-            "3. personality 和 speaking_style 要体现思考方式，例如数据派、制度派、产业派、人文派、交叉质询派；不要写成人身攻击、阴谋指控、脏话或表演型互怼。\n"
-            "4. 每位辩手都应具备专业感，允许在边缘问题上承认对方合理之处，但在核心判断上保持鲜明分歧。\n"
+            "1. 立场差异要明确，但都必须像真实社会中的利益相关方或分析者，而不是网络骂战选手。\n"
+            "2. 分歧应来自利益位置、风险偏好、制度约束、价值排序或分析框架，而不是单纯情绪对立。\n"
+            "3. personality 和 speaking_style 要体现思考方式，例如数据派、制度派、产业派、人文派、交叉质询派，不要写成人身攻击型角色。\n"
+            "4. 每位辩手都应具备专业感，允许承认对方局部合理，但在核心判断上保持鲜明分歧。\n"
             "5. speaking_style 请尽量使用短标签，例如 structured / empirical / blunt / narrative / cross_exam / high_signal。\n"
+            "6. 这些辩手不应共享同一种发言模板。不要把他们设计成每轮都用“我同意”“我认为”起手的机械角色；他们应能直接反驳、追问、重定义问题，并推动讨论深入。\n"
             f"背景简报：\n{brief[:1200]}"
         )
         try:
@@ -90,7 +89,7 @@ class HostAgent:
             f"辩论记录：\n{transcript[:6000]}\n\n"
             "请输出 Markdown 报告，包含：\n"
             "1) 背景摘要\n2) 各方核心观点与代表发言\n3) 交锋焦点\n4) 综合分析\n5) 主持人结论\n"
-            "语言简洁有信息密度。\n"
+            "语言简洁但信息密度高。\n"
         )
         try:
             report = await self.llm.chat(HOST_SYSTEM_PROMPT, user_prompt)
@@ -107,7 +106,6 @@ class HostAgent:
         text = raw.strip()
         if "```" in text:
             parts = text.split("```")
-            # Prefer fenced body.
             body = parts[1] if len(parts) > 1 else text
             if body.strip().startswith("json"):
                 body = body.strip()[4:]
@@ -127,9 +125,9 @@ class HostAgent:
             bullets.append(f"- {r.title}：{r.snippet[:120]}")
         if not bullets:
             bullets = [
-                "- 该议题通常涉及技术可行性、伦理边界、商业激励和政策治理。",
-                "- 需要区分短期影响与长期结构性影响，避免单一结论。",
-                "- 建议关注利益相关方：普通用户、企业、监管者、研究者。",
+                "- 该议题通常同时涉及技术可行性、伦理边界、商业激励和政策治理。",
+                "- 需要区分短期影响与长期结构性后果，避免只给单一结论。",
+                "- 建议重点关注普通用户、企业、监管者、研究者等不同利益相关方。",
             ]
         return (
             f"## {topic} 背景简报\n\n"
@@ -141,44 +139,44 @@ class HostAgent:
     def _fallback_debaters(self, topic: str, debater_count: int) -> List[DebaterConfig]:
         pool = [
             DebaterConfig(
-                name="技术极客 Lin",
+                name="技术推进派 Lin",
                 background="AI 系统架构师，偏工程理性",
-                stance=f"对 {topic} 持积极推进态度",
-                personality="快节奏、喜欢拿数据说话，偶尔毒舌",
+                stance=f"对《{topic}》持积极推进态度",
+                personality="强调可扩展性和试错速度，反感空泛恐惧",
                 speaking_style="high_signal",
-                avatar_emoji="🛠️",
+                avatar_emoji="因",
             ),
             DebaterConfig(
-                name="政策观察员 Zhou",
-                background="公共政策研究者，关注制度设计",
-                stance=f"对 {topic} 持审慎监管态度",
-                personality="逻辑严谨、擅长追问边界条件",
+                name="制度审慎派 Zhou",
+                background="公共政策研究者，关注制度设计与问责",
+                stance=f"对《{topic}》持审慎监管态度",
+                personality="逻辑严谨，擅长追问边界条件和责任链",
                 speaking_style="structured",
-                avatar_emoji="🏛️",
+                avatar_emoji="衡",
             ),
             DebaterConfig(
-                name="商业操盘手 Chen",
-                background="互联网产品负责人，关注增长和 ROI",
-                stance=f"对 {topic} 持务实落地态度",
-                personality="结果导向、善于算账、吐槽直接",
+                name="落地经营派 Chen",
+                background="互联网产品负责人，关注增长、预算与 ROI",
+                stance=f"对《{topic}》持务实落地态度",
+                personality="结果导向，习惯把问题拆成成本、周期和止损",
                 speaking_style="blunt",
-                avatar_emoji="📈",
+                avatar_emoji="账",
             ),
             DebaterConfig(
-                name="人文批评者 Fang",
-                background="社会学作者，长期观察技术与人",
-                stance=f"对 {topic} 强调社会与伦理风险",
-                personality="语言锋利但不失温度",
+                name="社会后果派 Fang",
+                background="社会学作者，长期观察技术与组织关系",
+                stance=f"对《{topic}》强调社会与伦理风险",
+                personality="擅长从长期结构性后果切入，表达锋利但克制",
                 speaking_style="narrative",
-                avatar_emoji="📚",
+                avatar_emoji="衡",
             ),
             DebaterConfig(
-                name="怀疑主义者 Xu",
-                background="独立评论人，专挑假设漏洞",
-                stance=f"对 {topic} 持怀疑和反直觉立场",
-                personality="爱抬杠、抓概念漏洞",
+                name="交叉质询派 Xu",
+                background="独立评论者，专门拆解论证漏洞",
+                stance=f"对《{topic}》持怀疑和反直觉立场",
+                personality="专挑假设漏洞，逼迫各方给出更硬的判定标准",
                 speaking_style="cross_exam",
-                avatar_emoji="🧪",
+                avatar_emoji="问",
             ),
         ]
         return pool[:debater_count]
@@ -204,7 +202,7 @@ class HostAgent:
         ]
         for speaker, quotes in by_speaker.items():
             lines.append(f"### {speaker}")
-            lines.append(f"- 代表观点：{quotes[0] if quotes else '无'}")
+            lines.append(f"- 代表观点：{quotes[0] if quotes else '暂无'}")
             lines.append(f"- 发言次数：{len(quotes)}")
             lines.append("")
 
