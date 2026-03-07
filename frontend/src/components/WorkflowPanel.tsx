@@ -48,8 +48,10 @@ const phaseOrder: Record<DebatePhase, number> = {
   booting: 0,
   researching: 1,
   assembling: 2,
+  generating_background: 2.5,
   debating: 3,
   summarizing: 4,
+  generating_summary_image: 4.5,
   complete: 5,
   error: 5,
 };

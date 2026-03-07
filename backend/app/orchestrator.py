@@ -18,6 +18,7 @@ from app.models import (
     utc_now,
 )
 from app.providers.base import LLMProvider, SearchProvider
+from app.providers.image_generation import ImageGenerationService
 from app.storage.report_writer import ReportWriter
 from app.storage.session_store import SessionStore
 from app.utils.formatting import chunk_text
@@ -30,11 +31,13 @@ class DebateOrchestrator:
         search: SearchProvider,
         session_store: SessionStore,
         report_writer: ReportWriter,
+        image_service: ImageGenerationService | None = None,
     ) -> None:
         self.llm = llm
         self.search = search
         self.session_store = session_store
         self.report_writer = report_writer
+        self.image_service = image_service or ImageGenerationService()
 
     async def run(self, request: DebateStartRequest) -> AsyncGenerator[SSEEvent, None]:
         start_clock = monotonic()
@@ -87,6 +90,14 @@ class DebateOrchestrator:
             session.deadline_at = utc_now() + timedelta(seconds=request.time_limit_sec)
             self.session_store.update(session)
 
+            # Generate debater avatars in background
+            avatar_tasks = []
+            for debater in debaters:
+                task = asyncio.create_task(
+                    self._generate_avatar_with_event(debater, session.session_id)
+                )
+                avatar_tasks.append(task)
+
             yield SSEEvent(
                 event="debaters_ready",
                 data={
@@ -98,6 +109,46 @@ class DebateOrchestrator:
                     "deadline_at": session.deadline_at.isoformat(),
                 },
             )
+
+            # Generate debate background
+            yield SSEEvent(
+                event="phase",
+                data={
+                    "session_id": session.session_id,
+                    "phase": "generating_background",
+                    "title": "正在生成辩论场景",
+                    "detail": "AI正在绘制辩手头像与辩论舞台背景...",
+                },
+            )
+
+            background_path = await self.image_service.generate_debate_background(
+                request.topic, [d.model_dump() for d in debaters], session.session_id
+            )
+
+            if background_path:
+                yield SSEEvent(
+                    event="background_ready",
+                    data={
+                        "session_id": session.session_id,
+                        "background_path": background_path,
+                    },
+                )
+
+            # Wait for avatars to complete
+            avatar_results = await asyncio.gather(*avatar_tasks, return_exceptions=True)
+            debater_avatars = {}
+            for i, result in enumerate(avatar_results):
+                if isinstance(result, str):
+                    debater_avatars[debaters[i].name] = result
+
+            yield SSEEvent(
+                event="avatars_ready",
+                data={
+                    "session_id": session.session_id,
+                    "avatars": debater_avatars,
+                },
+            )
+
             yield SSEEvent(
                 event="phase",
                 data={
@@ -123,23 +174,25 @@ class DebateOrchestrator:
                     if session.stop_requested or utc_now() >= session.deadline_at or turn_id >= session.max_turns:
                         break
 
-                    content, citations = await agent.produce_turn(
+                    # Stream tokens from LLM in real-time
+                    content_parts = []
+                    citations = []
+
+                    # First get citations if search is enabled
+                    if request.enable_debater_search:
+                        try:
+                            citations = await self.search.search(f"{request.topic} {agent.config.stance}", num_results=2)
+                        except Exception:
+                            citations = []
+
+                    # Stream the content token by token
+                    async for token in agent.produce_turn_stream(
                         topic=request.topic,
                         brief=session.brief,
                         messages=session.messages,
-                        enable_search=request.enable_debater_search,
-                    )
-                    message = DebateMessage(
-                        speaker=agent.config.name,
-                        role="debater",
-                        content=content,
-                        turn_index=turn_id,
-                        citations=citations,
-                    )
-                    session.messages.append(message)
-                    self.session_store.update(session)
-
-                    for token in chunk_text(content, chunk_size=20):
+                        enable_search=False,  # Search already done above
+                    ):
+                        content_parts.append(token)
                         yield SSEEvent(
                             event="debate_token",
                             data={
@@ -149,7 +202,17 @@ class DebateOrchestrator:
                                 "token": token,
                             },
                         )
-                        await asyncio.sleep(0.01)
+
+                    content = "".join(content_parts)
+                    message = DebateMessage(
+                        speaker=agent.config.name,
+                        role="debater",
+                        content=content,
+                        turn_index=turn_id,
+                        citations=citations,
+                    )
+                    session.messages.append(message)
+                    self.session_store.update(session)
 
                     yield SSEEvent(
                         event="debate_turn_end",
@@ -178,6 +241,24 @@ class DebateOrchestrator:
                 await asyncio.sleep(0.01)
 
             report_path = self.report_writer.write_markdown(request.topic, report)
+
+            # Generate summary image
+            yield SSEEvent(
+                event="phase",
+                data={
+                    "session_id": session.session_id,
+                    "phase": "generating_summary_image",
+                    "title": "正在生成总结海报",
+                    "detail": "AI正在绘制辩论总结可视化海报...",
+                },
+            )
+
+            summary_image_path = await self.image_service.generate_summary_image(
+                request.topic,
+                [d.model_dump() for d in debaters],
+                session.session_id,
+            )
+
             duration_sec = int(monotonic() - start_clock)
             session.state = SessionState.done if not session.stop_requested else SessionState.stopped
             self.session_store.update(session)
@@ -187,6 +268,7 @@ class DebateOrchestrator:
                 data={
                     "session_id": session.session_id,
                     "report_path": str(report_path.resolve()),
+                    "summary_image_path": summary_image_path,
                     "total_turns": len(session.messages),
                     "duration_sec": duration_sec,
                 },
@@ -204,6 +286,21 @@ class DebateOrchestrator:
                     "retrying": False,
                 },
             )
+
+    async def _generate_avatar_with_event(
+        self, debater: DebaterConfig, session_id: str
+    ) -> str | None:
+        """Generate avatar for a debater and emit event."""
+        try:
+            avatar_path = await self.image_service.generate_debater_avatar(
+                debater.model_dump(), session_id
+            )
+            return avatar_path
+        except Exception as exc:
+            # Log but don't fail the debate if image generation fails
+            import logging
+            logging.getLogger(__name__).warning(f"Failed to generate avatar for {debater.name}: {exc}")
+            return None
 
     def _build_debater_agents(self, debaters: List[DebaterConfig]) -> List[DebaterAgent]:
         return [

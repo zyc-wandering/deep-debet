@@ -75,9 +75,34 @@ export function useDebate() {
                   data.debaters,
                   data.deadline_at ? Date.parse(data.deadline_at) : null,
                 );
-                useDebateStore
-                  .getState()
-                  .setPhase("debating", "辩手已就位", "倒计时已开始，等待首位辩手进入实质交锋。");
+                return;
+              }
+
+              if (msg.event === "background_ready") {
+                const data = JSON.parse(msg.data) as {
+                  session_id: string;
+                  background_path: string;
+                };
+                // Convert local path to API URL
+                const filename = data.background_path.split("/").pop() || data.background_path.split("\\").pop();
+                useDebateStore.getState().setBackgroundImage(`/api/images/${filename}`);
+                return;
+              }
+
+              if (msg.event === "avatars_ready") {
+                const data = JSON.parse(msg.data) as {
+                  session_id: string;
+                  avatars: Record<string, string>;
+                };
+                // Convert local paths to API URLs
+                const avatars: Record<string, string> = {};
+                Object.entries(data.avatars).forEach(([name, path]) => {
+                  const filename = path.split("/").pop() || path.split("\\").pop();
+                  avatars[name] = `/api/images/${filename}`;
+                });
+                useDebateStore.getState().setAvatarImages(avatars);
+                // Auto-switch to debate tab when ready
+                useDebateStore.getState().setTab("debate");
                 return;
               }
 
@@ -115,8 +140,18 @@ export function useDebate() {
               }
 
               if (msg.event === "done") {
-                const data = JSON.parse(msg.data) as { session_id: string; report_path: string };
-                useDebateStore.getState().setDone(data.session_id, data.report_path);
+                const data = JSON.parse(msg.data) as {
+                  session_id: string;
+                  report_path: string;
+                  summary_image_path?: string;
+                };
+                // Convert local path to API URL if exists
+                let summaryImageUrl: string | undefined;
+                if (data.summary_image_path) {
+                  const filename = data.summary_image_path.split("/").pop() || data.summary_image_path.split("\\").pop();
+                  summaryImageUrl = `/api/images/${filename}`;
+                }
+                useDebateStore.getState().setDone(data.session_id, data.report_path, summaryImageUrl);
                 await fetchReport(data.report_path);
                 abortRef.current?.abort();
                 abortRef.current = null;
@@ -149,6 +184,10 @@ export function useDebate() {
         const store = useDebateStore.getState();
         const sessionId = store.sessionId;
         if (!sessionId) return;
+
+        // Abort the SSE connection immediately
+        abortRef.current?.abort();
+        abortRef.current = null;
 
         store.markStopRequested();
 

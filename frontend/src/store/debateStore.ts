@@ -1,9 +1,12 @@
 import { create } from "zustand";
-import { DebateLine, DebaterConfig, DebatePhase, WorkflowActivity } from "../types";
+import { DebateLine, DebaterConfig, DebatePhase, DebateRoomTab, WorkflowActivity, DebateImages } from "../types";
 
 type RunStatus = "idle" | "running" | "done" | "error";
 
 interface DebateState {
+  // Page navigation
+  currentTab: DebateRoomTab;
+
   status: RunStatus;
   phase: DebatePhase;
   phaseLabel: string;
@@ -23,17 +26,27 @@ interface DebateState {
   activeSpeaker: string;
   activeTurnId: number | null;
 
+  // Images
+  images: DebateImages;
+
+  // Navigation
+  setTab(tab: DebateRoomTab): void;
+
+  // Debate actions
   start(topic: string): void;
   setSessionId(sessionId: string): void;
   setPhase(phase: DebatePhase, label: string, detail?: string): void;
   addActivity(title: string, detail?: string, tone?: WorkflowActivity["tone"]): void;
   appendHostResearch(chunk: string): void;
   setDebaters(sessionId: string, debaters: DebaterConfig[], debateDeadlineMs: number | null): void;
+  setBackgroundImage(path: string): void;
+  setAvatarImages(avatars: Record<string, string>): void;
+  setSummaryImage(path: string): void;
   appendToken(sessionId: string, speaker: string, turnId: number, token: string): void;
   finalizeTurn(sessionId: string, speaker: string, turnId: number, fullContent: string): void;
   appendHostSummary(chunk: string): void;
   markStopRequested(): void;
-  setDone(sessionId: string, reportPath: string): void;
+  setDone(sessionId: string, reportPath: string, summaryImagePath?: string): void;
   setReportMarkdown(text: string): void;
   setError(msg: string): void;
   reset(): void;
@@ -66,6 +79,8 @@ const pushActivity = (
 };
 
 const initialState = {
+  currentTab: "config" as DebateRoomTab,
+
   status: "idle" as RunStatus,
   phase: "idle" as DebatePhase,
   phaseLabel: "准备开始",
@@ -84,14 +99,23 @@ const initialState = {
   activities: [] as WorkflowActivity[],
   activeSpeaker: "",
   activeTurnId: null as number | null,
+
+  images: {
+    avatars: {} as Record<string, string>,
+  } as DebateImages,
 };
 
 export const useDebateStore = create<DebateState>((set) => ({
   ...initialState,
+
+  // Navigation
+  setTab: (tab) => set({ currentTab: tab }),
+
   start: (topic) =>
     set({
       ...initialState,
       topic,
+      currentTab: "host",
       status: "running",
       phase: "booting",
       phaseLabel: "辩题已提交",
@@ -128,6 +152,36 @@ export const useDebateStore = create<DebateState>((set) => ({
         s.activities,
         "辩手阵列已建立",
         `已生成 ${debaters.length} 位立场各异的辩手，倒计时开始。`,
+        "done",
+      ),
+    })),
+
+  setBackgroundImage: (path) =>
+    set((s) => ({
+      images: { ...s.images, background: path },
+      activities: pushActivity(
+        s.activities,
+        "辩论场景已生成",
+        "AI绘制的辩论舞台背景已就绪。",
+        "done",
+      ),
+    })),
+
+  setAvatarImages: (avatars) =>
+    set((s) => ({
+      images: { ...s.images, avatars: { ...s.images.avatars, ...avatars } },
+      debaters: s.debaters.map((d) =>
+        avatars[d.name] ? { ...d, avatar_url: avatars[d.name] } : d
+      ),
+    })),
+
+  setSummaryImage: (path) =>
+    set((s) => ({
+      images: { ...s.images, summary: path },
+      activities: pushActivity(
+        s.activities,
+        "总结海报已生成",
+        "辩论总结可视化海报已就绪。",
         "done",
       ),
     })),
@@ -180,21 +234,29 @@ export const useDebateStore = create<DebateState>((set) => ({
     })),
   markStopRequested: () =>
     set((s) => ({
+      status: "done" as const,
+      phase: "summarizing" as DebatePhase,
+      phaseLabel: "正在结束",
+      phaseDetail: "已请求提前结束，正在生成总结报告...",
       activities: pushActivity(
         s.activities,
         "已请求提前结束",
-        "当前轮次结束后将进入主持人总结，不会中断已生成内容。",
+        "正在生成总结报告...",
         "neutral",
       ),
     })),
-  setDone: (sessionId, reportPath) =>
+  setDone: (sessionId, reportPath, summaryImagePath) =>
     set((s) => ({
       status: "done",
       phase: "complete",
       phaseLabel: "报告已生成",
       phaseDetail: "主持人总结完成，本轮辩论已归档。",
+      currentTab: "summary",
       sessionId,
       reportPath,
+      images: summaryImagePath
+        ? { ...s.images, summary: summaryImagePath }
+        : s.images,
       activeSpeaker: "",
       activeTurnId: null,
       activities: pushActivity(

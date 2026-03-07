@@ -10,8 +10,10 @@ const phaseText: Record<DebatePhase, string> = {
   booting: "初始化",
   researching: "调研中",
   assembling: "配置中",
+  generating_background: "生成场景中",
   debating: "辩论中",
   summarizing: "总结中",
+  generating_summary_image: "生成海报中",
   complete: "已完成",
   error: "异常",
 };

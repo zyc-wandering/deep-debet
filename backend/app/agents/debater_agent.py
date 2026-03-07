@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
-from typing import List, Tuple
+from typing import AsyncGenerator, List, Tuple
 
 from app.agents.context_manager import ContextManager
 from app.models import DebaterConfig, DebateMessage, SearchResult
@@ -88,6 +89,59 @@ class DebaterAgent:
             logger.warning("Debater LLM failed for %s: %s", self.config.name, exc)
 
         return self._fallback_turn(topic, brief, messages, references), references
+
+    async def produce_turn_stream(
+        self,
+        topic: str,
+        brief: str,
+        messages: List[DebateMessage],
+        enable_search: bool,
+    ) -> AsyncGenerator[str, None]:
+        """Stream debate turn content token by token."""
+        references: List[SearchResult] = []
+        if enable_search:
+            try:
+                references = await self.search.search(f"{topic} {self.config.stance}", num_results=2)
+            except Exception:
+                references = []
+
+        turn_instruction = (
+            "请给出本轮发言。\n"
+            "优先挑一个最值得推进的分歧，不必机械回应最近一句。\n"
+            "你可以直接反驳，也可以先重定义问题、拆开条件、指出被跳过的执行成本或责任链。\n"
+            "如果对方某个局部判断合理，只需顺手承认后立刻推进，不要把让步写成固定开场。\n"
+            "本轮必须带来推进：新增一个分析维度、明确一个判定标准、补一段因果机制，或把争论推进到更具体的场景。\n"
+            "不要重复自己的旧句式，不要空泛表态，不要变成骂街。"
+        )
+        self.rolling_summary = self.context_manager.refresh_rolling_summary(messages)
+        ctx = self.context_manager.build(
+            current_speaker=self.config.name,
+            system_prompt=self._system_prompt(),
+            brief=brief,
+            rolling_summary=self.rolling_summary,
+            messages=messages,
+            turn_instruction=turn_instruction,
+        )
+
+        refs_text = "\n".join([f"- {r.title}: {r.snippet[:120]}" for r in references])
+        user_prompt = ctx.to_prompt()
+        if refs_text:
+            user_prompt = f"{user_prompt}\n\n## Optional Realtime References\n{refs_text}"
+
+        full_content = ""
+        try:
+            # Stream tokens from LLM
+            async for token in self.llm.chat_stream(self._system_prompt(), user_prompt):
+                full_content += token
+                yield token
+        except Exception as exc:
+            logger.warning("Debater LLM stream failed for %s: %s", self.config.name, exc)
+            # Fallback: yield the fallback content
+            fallback = self._fallback_turn(topic, brief, messages, references)
+            # Stream fallback character by character
+            for char in fallback:
+                yield char
+                await asyncio.sleep(0.01)
 
     def _fallback_turn(
         self,

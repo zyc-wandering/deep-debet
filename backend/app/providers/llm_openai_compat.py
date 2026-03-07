@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict
+from typing import Any, AsyncGenerator, Dict
 
 import httpx
 
@@ -18,6 +18,62 @@ class OpenAICompatProvider(LLMProvider):
     @property
     def enabled(self) -> bool:
         return bool(self.api_key)
+
+    async def chat_stream(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> AsyncGenerator[str, None]:
+        """Stream chat completion from LLM, yielding tokens as they arrive."""
+        if not self.enabled:
+            raise RuntimeError("OPENAI_API_KEY is missing")
+
+        payload: Dict[str, Any] = {
+            "model": self.model,
+            "temperature": 0.8,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "stream": True,
+        }
+        if "api.kimi.com/coding" in self.base_url:
+            payload["max_tokens"] = settings.openai_max_output_tokens
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+        url = f"{self.base_url}/chat/completions"
+
+        async with httpx.AsyncClient(timeout=120) as client:
+            async with client.stream("POST", url, headers=headers, json=payload) as response:
+                try:
+                    response.raise_for_status()
+                except httpx.HTTPStatusError as exc:
+                    detail = await response.aread()
+                    detail_text = detail.decode("utf-8", errors="ignore")
+                    raise RuntimeError(
+                        f"LLM stream request failed with status {response.status_code}: {detail_text[:500]}"
+                    ) from exc
+
+                async for line in response.aiter_lines():
+                    line = line.strip()
+                    if not line or line.startswith(":"):
+                        continue
+                    if line.startswith("data: "):
+                        data = line[6:]
+                        if data == "[DONE]":
+                            break
+                        try:
+                            chunk = json.loads(data)
+                            delta = chunk.get("choices", [{}])[0].get("delta", {})
+                            content = delta.get("content", "")
+                            if content:
+                                yield content
+                        except json.JSONDecodeError:
+                            continue
 
     async def chat(self, system_prompt: str, user_prompt: str) -> str:
         if not self.enabled:

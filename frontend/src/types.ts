@@ -2,6 +2,8 @@ export type DebateEventType =
   | "phase"
   | "host_research"
   | "debaters_ready"
+  | "background_ready"
+  | "avatars_ready"
   | "debate_token"
   | "debate_turn_end"
   | "host_summary"
@@ -13,10 +15,14 @@ export type DebatePhase =
   | "booting"
   | "researching"
   | "assembling"
+  | "generating_background"
   | "debating"
   | "summarizing"
+  | "generating_summary_image"
   | "complete"
   | "error";
+
+export type DebateRoomTab = "config" | "host" | "debate" | "summary";
 
 export interface DebaterConfig {
   id: string;
@@ -26,6 +32,24 @@ export interface DebaterConfig {
   personality: string;
   speaking_style: string;
   avatar_emoji: string;
+  avatar_url?: string;
+}
+
+export interface DebaterConfig {
+  id: string;
+  name: string;
+  background: string;
+  stance: string;
+  personality: string;
+  speaking_style: string;
+  avatar_emoji: string;
+  avatar_url?: string;
+}
+
+export interface DebateImages {
+  background?: string;
+  summary?: string;
+  avatars: Record<string, string>;
 }
 
 export interface DebateLine {
