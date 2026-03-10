@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 from uuid import uuid4
 
 from pydantic import BaseModel, Field, model_validator
@@ -14,6 +14,7 @@ def utc_now() -> datetime:
 
 class SessionState(str, Enum):
     running = "running"
+    configuring = "configuring"
     stopped = "stopped"
     done = "done"
     error = "error"
@@ -50,19 +51,18 @@ class DebaterConfig(BaseModel):
     avatar_url: Optional[str] = None
 
 
-class FocusDimension(BaseModel):
-    """A focus dimension extracted by host for pre-debate configuration."""
+class FocusOption(BaseModel):
+    """A topic-grounded focus option proposed by the host."""
     id: str = Field(default_factory=lambda: str(uuid4()))
     name: str
     description: str
-    selected: bool = True
 
 
 class PreDebateConfig(BaseModel):
-    """User configuration for debate after host research."""
-    dimensions: List[FocusDimension] = Field(default_factory=list)
-    intensity: str = "balanced"  # "mild", "balanced", "intense"
-    user_context: str = ""  # Optional user-provided context
+    """User configuration collected after host research."""
+    selected_focus_id: str = Field(min_length=1)
+    intensity: Literal["mild", "balanced", "intense"] = "balanced"
+    user_context: str = ""
 
 
 class FollowUpMessage(BaseModel):
@@ -104,9 +104,6 @@ class DebateStartRequest(BaseModel):
     enable_debater_search: bool = False
     model_variant: DebateModelVariant = DebateModelVariant.lite
     fun_mode: str = "persona_clash"
-
-    # Pre-debate configuration (optional - can be set after research)
-    pre_debate_config: Optional[PreDebateConfig] = None
 
     @model_validator(mode="after")
     def validate_fun_mode(self) -> "DebateStartRequest":
@@ -153,10 +150,15 @@ class DebateSession(BaseModel):
     model_variant: DebateModelVariant = DebateModelVariant.lite
     state: SessionState = SessionState.running
     started_at: datetime = Field(default_factory=utc_now)
-    deadline_at: datetime
+    deadline_at: Optional[datetime] = None
+    debater_count: int = 3
+    time_limit_sec: int = 360
     max_turns: int
+    enable_debater_search: bool = False
+    fun_mode: str = "persona_clash"
     debaters: List[DebaterConfig] = Field(default_factory=list)
     brief: str = ""
+    research_references: List[SearchResult] = Field(default_factory=list)
     messages: List[DebateMessage] = Field(default_factory=list)
     stop_requested: bool = False
     error: Optional[str] = None
@@ -166,6 +168,7 @@ class DebateSession(BaseModel):
     stage_transcript: Dict[DebateStage, List[DebateMessage]] = Field(default_factory=dict)
 
     # Pre-debate configuration
+    focus_options: List[FocusOption] = Field(default_factory=list)
     pre_debate_config: Optional[PreDebateConfig] = None
 
     # Follow-up thread

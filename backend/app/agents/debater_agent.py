@@ -6,7 +6,7 @@ import re
 from typing import AsyncGenerator, List, Optional, Tuple
 
 from app.agents.context_manager import ContextManager
-from app.models import DebateMessage, DebateStage, SearchResult
+from app.models import DebaterConfig, DebateMessage, DebateStage, SearchResult
 from app.providers.base import LLMProvider, SearchProvider
 
 logger = logging.getLogger(__name__)
@@ -151,6 +151,8 @@ class DebaterAgent:
         stage: DebateStage,
         intensity: str,
         enable_search: bool,
+        selected_focus: str = "",
+        user_context: str = "",
     ) -> AsyncGenerator[str, None]:
         """Stream debate turn with stage-specific prompting."""
         references: List[SearchResult] = []
@@ -161,12 +163,12 @@ class DebaterAgent:
                 references = []
 
         # Get stage-specific instruction
-        turn_instruction = self._get_stage_instruction(stage, intensity)
+        turn_instruction = self._get_stage_instruction(stage, intensity, selected_focus, user_context)
 
         self.rolling_summary = self.context_manager.refresh_rolling_summary(messages)
         ctx = self.context_manager.build(
             current_speaker=self.config.name,
-            system_prompt=self._system_prompt_stage(stage, intensity),
+            system_prompt=self._system_prompt_stage(stage, intensity, selected_focus, user_context),
             brief=brief,
             rolling_summary=self.rolling_summary,
             messages=messages,
@@ -180,7 +182,10 @@ class DebaterAgent:
 
         full_content = ""
         try:
-            async for token in self.llm.chat_stream(self._system_prompt_stage(stage, intensity), user_prompt):
+            async for token in self.llm.chat_stream(
+                self._system_prompt_stage(stage, intensity, selected_focus, user_context),
+                user_prompt,
+            ):
                 full_content += token
                 yield token
         except Exception as exc:
@@ -190,7 +195,13 @@ class DebaterAgent:
                 yield char
                 await asyncio.sleep(0.01)
 
-    def _system_prompt_stage(self, stage: DebateStage, intensity: str) -> str:
+    def _system_prompt_stage(
+        self,
+        stage: DebateStage,
+        intensity: str,
+        selected_focus: str = "",
+        user_context: str = "",
+    ) -> str:
         """Generate system prompt for specific stage and intensity."""
         base_prompt = (
             f"你是辩手 {self.config.name}。\n"
@@ -198,6 +209,7 @@ class DebaterAgent:
             f"立场：{self.config.stance}\n"
             f"公众形象与表达偏好：{self.config.personality}\n"
         )
+        focus_context = self._format_focus_context(selected_focus, user_context)
 
         stage_guidance = {
             DebateStage.opening: (
@@ -234,10 +246,27 @@ class DebaterAgent:
 
         length_guidance = "输出 180-280 字中文，信息密度高，句式自然，避免重复口头禅。"
 
-        return f"{base_prompt}\n{guidance}\n{intensity_text}\n{length_guidance}"
+        return f"{base_prompt}\n{focus_context}\n{guidance}\n{intensity_text}\n{length_guidance}"
 
-    def _get_stage_instruction(self, stage: DebateStage, intensity: str) -> str:
+    def _get_stage_instruction(
+        self,
+        stage: DebateStage,
+        intensity: str,
+        selected_focus: str = "",
+        user_context: str = "",
+    ) -> str:
         """Get turn instruction for specific stage."""
+        focus_instruction = ""
+        if selected_focus:
+            focus_instruction = (
+                f"\n本场必须显式覆盖的讨论切面：{selected_focus}。\n"
+                "你可以支持、反驳、重定义或比较它，但不能忽略它，也不能把整场讨论收缩成单一路径。\n"
+            )
+        context_instruction = ""
+        if user_context.strip():
+            context_instruction = (
+                f"\n用户补充背景如下，请把它当作场景信息而不是立场指令：{user_context.strip()}\n"
+            )
         instructions = {
             DebateStage.opening: (
                 "请给出开场陈述。\n"
@@ -261,7 +290,17 @@ class DebaterAgent:
                 "不要简单重复之前的话，要展示交锋后的立场澄清。"
             ),
         }
-        return instructions.get(stage, instructions[DebateStage.free_debate])
+        return f"{instructions.get(stage, instructions[DebateStage.free_debate])}{focus_instruction}{context_instruction}"
+
+    def _format_focus_context(self, selected_focus: str, user_context: str) -> str:
+        lines = []
+        if selected_focus:
+            lines.append(f"本场用户更关心的讨论切面：{selected_focus}")
+            lines.append("这只要求你显式覆盖该维度，不代表用户偏向任何结论。")
+        if user_context.strip():
+            lines.append(f"用户补充背景：{user_context.strip()}")
+            lines.append("把它视为背景补充，不要把它解释成用户站队。")
+        return "\n".join(lines).strip()
 
     async def follow_up_stream(
         self,

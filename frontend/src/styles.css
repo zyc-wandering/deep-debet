@@ -769,6 +769,15 @@ select:focus {
   font-weight: 600;
 }
 
+.room-error {
+  margin: 0 auto 20px;
+  max-width: 1000px;
+  padding: 12px 14px;
+  border: 1px solid rgba(158, 60, 50, 0.24);
+  border-radius: 12px;
+  background: rgba(158, 60, 50, 0.08);
+}
+
 /* ================================
    Config Page Styles
    ================================ */
@@ -1699,4 +1708,48 @@ select:focus {
 .follow-up-input button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.configuration-panel {
+  display: grid;
+  gap: 18px;
+}
+
+.focus-options-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+}
+
+.focus-option-card {
+  display: grid;
+  gap: 8px;
+  text-align: left;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #ffffff80;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.focus-option-card:hover {
+  background: #8b674814;
+  border-color: #8b674833;
+  transform: translateY(-1px);
+}
+
+.focus-option-card.selected {
+  background: #8b67481f;
+  border-color: #8b674859;
+  box-shadow: 0 0 0 2px rgba(139, 103, 72, 0.08);
+}
+
+.focus-option-card strong {
+  font-size: 1rem;
+}
+
+.focus-option-card span {
+  color: var(--ink-soft);
+  line-height: 1.55;
 }

@@ -1,7 +1,7 @@
 export type DebateEventType =
   | "phase"
   | "host_research"
-  | "dimensions_extracted" // Host extracted focus dimensions
+  | "focus_options_ready"
   | "debaters_ready"
   | "background_ready"
   | "avatars_ready"
@@ -47,17 +47,14 @@ export interface DebaterConfig {
   avatar_url?: string;
 }
 
-// Focus dimension for pre-debate configuration
-export interface FocusDimension {
+export interface FocusOption {
   id: string;
   name: string;
   description: string;
-  selected: boolean;
 }
 
-// Pre-debate configuration
 export interface PreDebateConfig {
-  dimensions: FocusDimension[];
+  selected_focus_id: string;
   intensity: "mild" | "balanced" | "intense";
   user_context: string;
 }
@@ -131,8 +128,6 @@ export interface DebateStartRequest {
   enable_debater_search: boolean;
   model_variant: "lite" | "pro";
   fun_mode: "persona_clash";
-  // Pre-debate configuration (optional - set after research)
-  pre_debate_config?: PreDebateConfig;
 }
 
 export interface DebateConfigureRequest {

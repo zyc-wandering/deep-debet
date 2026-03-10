@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { DebateStartRequest } from "../types";
+import { useDebateStore } from "../store/debateStore";
 
 interface Props {
   onStart: (payload: DebateStartRequest) => void;
@@ -13,6 +14,7 @@ export function ConfigPage({ onStart, isRunning }: Props) {
   const [maxTurns, setMaxTurns] = useState(24);
   const [enableSearch, setEnableSearch] = useState(false);
   const [modelVariant, setModelVariant] = useState<DebateStartRequest["model_variant"]>("lite");
+  const errorMessage = useDebateStore((s) => s.errorMessage);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -41,6 +43,8 @@ export function ConfigPage({ onStart, isRunning }: Props) {
       </header>
 
       <form className="config-form" onSubmit={handleSubmit}>
+        {errorMessage && <p className="error">{errorMessage}</p>}
+
         <div className="form-section">
           <label className="field-label">辩题</label>
           <textarea

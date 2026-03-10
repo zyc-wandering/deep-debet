@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { DebateLine } from "../types";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { useDebate } from "../hooks/useDebate";
 import { useDebateStore } from "../store/debateStore";
 import { DebateStream } from "../components/DebateStream";
 import { Timer } from "../components/Timer";
@@ -9,6 +11,7 @@ interface Props {
 }
 
 export function DebateRoomPage({ onStop }: Props) {
+  const debate = useDebate();
   const currentTab = useDebateStore((s) => s.currentTab);
   const setTab = useDebateStore((s) => s.setTab);
 
@@ -24,6 +27,17 @@ export function DebateRoomPage({ onStop }: Props) {
   const images = useDebateStore((s) => s.images);
   const reportMarkdown = useDebateStore((s) => s.reportMarkdown);
   const activities = useDebateStore((s) => s.activities);
+  const sessionId = useDebateStore((s) => s.sessionId);
+  const errorMessage = useDebateStore((s) => s.errorMessage);
+
+  const focusOptions = useDebateStore((s) => s.focusOptions);
+  const selectedFocusId = useDebateStore((s) => s.selectedFocusId);
+  const intensityDraft = useDebateStore((s) => s.intensityDraft);
+  const userContextDraft = useDebateStore((s) => s.userContextDraft);
+  const isConfigurationReady = useDebateStore((s) => s.isConfigurationReady);
+  const setSelectedFocus = useDebateStore((s) => s.setSelectedFocus);
+  const setIntensityDraft = useDebateStore((s) => s.setIntensityDraft);
+  const setUserContextDraft = useDebateStore((s) => s.setUserContextDraft);
 
   const [secondsLeft, setSecondsLeft] = useState(0);
 
@@ -53,23 +67,31 @@ export function DebateRoomPage({ onStop }: Props) {
   }, [lines, buffers]);
 
   const running = status === "running";
+  const canConfigure = phase === "configuring" && isConfigurationReady && Boolean(selectedFocusId);
 
-  // Auto-switch tabs based on phase
   useEffect(() => {
-    const inDebateStage = phase === "opening" || phase === "free_debate" || phase === "closing";
-    if (inDebateStage && currentTab === "host") {
-      setTab("debate");
-    } else if (phase === "complete" && currentTab !== "summary") {
+    if (phase === "complete" && currentTab !== "summary") {
       setTab("summary");
     }
   }, [phase, currentTab, setTab]);
 
+  const handleConfigure = async () => {
+    if (!sessionId || !selectedFocusId) return;
+    await debate.configure({
+      session_id: sessionId,
+      pre_debate_config: {
+        selected_focus_id: selectedFocusId,
+        intensity: intensityDraft,
+        user_context: userContextDraft,
+      },
+    });
+  };
+
   return (
     <div className="debate-room">
-      {/* Header Navigation */}
       <header className="room-header">
         <div className="room-brand">
-          <span className="room-logo">🎭</span>
+          <span className="room-logo">DR</span>
           <span className="room-title">DebateAI Room</span>
         </div>
 
@@ -84,14 +106,14 @@ export function DebateRoomPage({ onStop }: Props) {
           <button
             className={currentTab === "debate" ? "active" : ""}
             onClick={() => setTab("debate")}
-            disabled={phase === "idle" || phase === "booting" || phase === "researching"}
+            disabled={!debaters.length}
           >
             辩论舞台
           </button>
           <button
             className={currentTab === "summary" ? "active" : ""}
             onClick={() => setTab("summary")}
-            disabled={phase === "idle" || phase === "booting" || phase === "researching"}
+            disabled={phase !== "complete"}
           >
             总结报告
           </button>
@@ -106,9 +128,7 @@ export function DebateRoomPage({ onStop }: Props) {
         </div>
       </header>
 
-      {/* Main Content - Holy Grail Layout */}
       <div className="room-layout">
-        {/* Left Sidebar */}
         <aside className="room-sidebar left">
           <div className="sidebar-section">
             <h4>辩手阵容</h4>
@@ -116,16 +136,16 @@ export function DebateRoomPage({ onStop }: Props) {
               {debaters.length === 0 ? (
                 <p className="sidebar-empty">等待生成...</p>
               ) : (
-                debaters.map((d) => (
-                  <div key={d.id} className="sidebar-debater">
-                    {d.avatar_url ? (
-                      <img src={d.avatar_url} alt={d.name} className="debater-thumb" />
+                debaters.map((debater) => (
+                  <div key={debater.id} className="sidebar-debater">
+                    {debater.avatar_url ? (
+                      <img src={debater.avatar_url} alt={debater.name} className="debater-thumb" />
                     ) : (
-                      <div className="debater-thumb-placeholder">{d.avatar_emoji}</div>
+                      <div className="debater-thumb-placeholder">{debater.avatar_emoji}</div>
                     )}
                     <div className="debater-info">
-                      <span className="debater-name">{d.name}</span>
-                      <span className="debater-stance">{d.stance.slice(0, 20)}...</span>
+                      <span className="debater-name">{debater.name}</span>
+                      <span className="debater-stance">{debater.stance.slice(0, 24)}...</span>
                     </div>
                   </div>
                 ))
@@ -136,11 +156,14 @@ export function DebateRoomPage({ onStop }: Props) {
           <div className="sidebar-section">
             <h4>活动日志</h4>
             <div className="sidebar-activities">
-              {activities.slice(-5).map((a) => (
-                <div key={a.id} className={`sidebar-activity ${a.tone}`}>
-                  <span className="activity-title">{a.title}</span>
+              {activities.slice(-5).map((activity) => (
+                <div key={activity.id} className={`sidebar-activity ${activity.tone}`}>
+                  <span className="activity-title">{activity.title}</span>
                   <span className="activity-time">
-                    {new Date(a.at).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}
+                    {new Date(activity.at).toLocaleTimeString("zh-CN", {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
                   </span>
                 </div>
               ))}
@@ -148,15 +171,15 @@ export function DebateRoomPage({ onStop }: Props) {
           </div>
         </aside>
 
-        {/* Center Main Content */}
         <main className="room-main">
-          {/* Host Workspace Tab */}
+          {errorMessage && <p className="error room-error">{errorMessage}</p>}
+
           {currentTab === "host" && (
             <div className="tab-content host-tab">
               <div className="host-workspace">
                 <section className="workspace-section research-section">
                   <header className="section-header">
-                    <h2>📝 主持人调研</h2>
+                    <h2>主持人调研</h2>
                     <span className="phase-badge">{phaseLabel}</span>
                   </header>
                   <div className="research-content">
@@ -171,24 +194,89 @@ export function DebateRoomPage({ onStop }: Props) {
                   </div>
                 </section>
 
+                {phase === "configuring" && (
+                  <section className="workspace-section configuration-section">
+                    <header className="section-header">
+                      <h2>选择你更关心的讨论切面</h2>
+                    </header>
+                    <div className="configuration-panel">
+                      <p className="form-intro">
+                        主持人已经基于议题研究整理出几个更值得展开的切面。这里选择的是你更关心的讨论维度，不是你想要的答案。
+                      </p>
+
+                      <div className="focus-options-grid">
+                        {focusOptions.map((option) => (
+                          <button
+                            key={option.id}
+                            type="button"
+                            className={`focus-option-card ${selectedFocusId === option.id ? "selected" : ""}`}
+                            onClick={() => setSelectedFocus(option.id)}
+                          >
+                            <strong>{option.name}</strong>
+                            <span>{option.description}</span>
+                          </button>
+                        ))}
+                      </div>
+
+                      <div className="grid config-grid">
+                        <label className="field">
+                          <span className="field-label">交锋强度</span>
+                          <select
+                            value={intensityDraft}
+                            onChange={(e) =>
+                              setIntensityDraft(e.target.value as "mild" | "balanced" | "intense")
+                            }
+                          >
+                            <option value="mild">Mild</option>
+                            <option value="balanced">Balanced</option>
+                            <option value="intense">Intense</option>
+                          </select>
+                        </label>
+                      </div>
+
+                      <label className="field">
+                        <span className="field-label">补充背景（可选）</span>
+                        <textarea
+                          className="topic-textarea"
+                          rows={4}
+                          value={userContextDraft}
+                          onChange={(e) => setUserContextDraft(e.target.value)}
+                          placeholder="补充场景约束、现实背景或你掌握的上下文。系统会把这些当作议题背景，而不是你的立场。"
+                        />
+                      </label>
+
+                      <div className="actions">
+                        <button
+                          type="button"
+                          className="primary-button"
+                          disabled={!canConfigure}
+                          onClick={() => void handleConfigure()}
+                        >
+                          继续辩论
+                        </button>
+                      </div>
+                    </div>
+                  </section>
+                )}
+
                 <section className="workspace-section debaters-section">
                   <header className="section-header">
-                    <h2>🎭 辩手配置</h2>
+                    <h2>辩手配置</h2>
                   </header>
                   <div className="debaters-grid">
                     {debaters.length === 0 ? (
                       <div className="debaters-loading">
                         <div className="loading-spinner" />
-                        <p>正在生成辩手角色...</p>
+                        <p>配置完成后将生成辩手角色...</p>
                       </div>
                     ) : (
-                      debaters.map((d) => (
-                        <div key={d.id} className="debater-config-card">
+                      debaters.map((debater) => (
+                        <div key={debater.id} className="debater-config-card">
                           <div className="debater-avatar-wrapper">
-                            {d.avatar_url ? (
-                              <img src={d.avatar_url} alt={d.name} className="debater-avatar-img" />
-                            ) : images.avatars[d.name] ? (
-                              <img src={images.avatars[d.name]} alt={d.name} className="debater-avatar-img" />
+                            {debater.avatar_url ? (
+                              <img src={debater.avatar_url} alt={debater.name} className="debater-avatar-img" />
+                            ) : images.avatars[debater.name] ? (
+                              <img src={images.avatars[debater.name]} alt={debater.name} className="debater-avatar-img" />
                             ) : (
                               <div className="debater-avatar-loading">
                                 <div className="loading-spinner small" />
@@ -196,9 +284,9 @@ export function DebateRoomPage({ onStop }: Props) {
                             )}
                           </div>
                           <div className="debater-config-info">
-                            <h4>{d.name}</h4>
-                            <p className="debater-config-bg">{d.background}</p>
-                            <p className="debater-config-stance">{d.stance}</p>
+                            <h4>{debater.name}</h4>
+                            <p className="debater-config-bg">{debater.background}</p>
+                            <p className="debater-config-stance">{debater.stance}</p>
                           </div>
                         </div>
                       ))
@@ -209,7 +297,7 @@ export function DebateRoomPage({ onStop }: Props) {
                 {images.background && (
                   <section className="workspace-section scene-section">
                     <header className="section-header">
-                      <h2>🎨 辩论场景</h2>
+                      <h2>辩论场景</h2>
                     </header>
                     <div className="scene-image-wrapper">
                       <img src={images.background} alt="辩论场景" className="scene-image" />
@@ -220,7 +308,6 @@ export function DebateRoomPage({ onStop }: Props) {
             </div>
           )}
 
-          {/* Debate Stage Tab */}
           {currentTab === "debate" && (
             <div className="tab-content debate-tab">
               {images.background && (
@@ -244,7 +331,6 @@ export function DebateRoomPage({ onStop }: Props) {
             </div>
           )}
 
-          {/* Summary Tab */}
           {currentTab === "summary" && (
             <div className="tab-content summary-tab">
               <div className="summary-content">
@@ -256,14 +342,16 @@ export function DebateRoomPage({ onStop }: Props) {
 
                 <div className="summary-report">
                   <header className="section-header">
-                    <h2>📊 辩论报告</h2>
+                    <h2>辩论报告</h2>
                   </header>
                   {reportMarkdown ? (
-                    <div className="markdown-body" dangerouslySetInnerHTML={{ __html: formatMarkdown(reportMarkdown) }} />
+                    <article className="markdown-body">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{reportMarkdown}</ReactMarkdown>
+                    </article>
                   ) : hostSummary ? (
-                    <div className="summary-streaming">
+                    <div className="summary-streaming markdown-body">
                       <h3>主持人流式总结</h3>
-                      <p>{hostSummary}</p>
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{hostSummary}</ReactMarkdown>
                     </div>
                   ) : (
                     <div className="summary-loading">
@@ -277,7 +365,6 @@ export function DebateRoomPage({ onStop }: Props) {
           )}
         </main>
 
-        {/* Right Sidebar */}
         <aside className="room-sidebar right">
           <div className="sidebar-section">
             <h4>辩论信息</h4>
@@ -292,9 +379,7 @@ export function DebateRoomPage({ onStop }: Props) {
               </div>
               <div className="info-item">
                 <span className="info-label">剩余时间</span>
-                <span className="info-value">
-                  {secondsLeft > 0 ? formatTime(secondsLeft) : "--"}
-                </span>
+                <span className="info-value">{secondsLeft > 0 ? formatTime(secondsLeft) : "--"}</span>
               </div>
             </div>
           </div>
@@ -312,22 +397,19 @@ export function DebateRoomPage({ onStop }: Props) {
               <button
                 className="sidebar-action"
                 onClick={() => setTab("debate")}
-                disabled={currentTab === "debate" || phase === "idle" || phase === "booting" || phase === "researching"}
+                disabled={currentTab === "debate" || !debaters.length}
               >
                 进入辩论舞台
               </button>
               <button
                 className="sidebar-action"
                 onClick={() => setTab("summary")}
-                disabled={currentTab === "summary" || phase === "idle" || phase === "booting" || phase === "researching"}
+                disabled={currentTab === "summary" || phase !== "complete"}
               >
                 查看总结报告
               </button>
               {(phase === "complete" || phase === "error") && (
-                <button
-                  className="sidebar-action primary"
-                  onClick={() => window.location.reload()}
-                >
+                <button className="sidebar-action primary" onClick={() => window.location.reload()}>
                   开始新辩论
                 </button>
               )}
@@ -343,15 +425,4 @@ function formatTime(seconds: number): string {
   const mins = Math.floor(seconds / 60);
   const secs = seconds % 60;
   return `${mins}:${secs.toString().padStart(2, "0")}`;
-}
-
-function formatMarkdown(md: string): string {
-  // Simple markdown to HTML conversion
-  return md
-    .replace(/^### (.*$)/gim, "<h3>$1</h3>")
-    .replace(/^## (.*$)/gim, "<h2>$1</h2>")
-    .replace(/^# (.*$)/gim, "<h1>$1</h1>")
-    .replace(/\*\*(.*)\*\*/gim, "<strong>$1</strong>")
-    .replace(/\*(.*)\*/gim, "<em>$1</em>")
-    .replace(/\n/gim, "<br />");
 }

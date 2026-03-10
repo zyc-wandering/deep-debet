@@ -1,5 +1,15 @@
 import { create } from "zustand";
-import { DebateLine, DebaterConfig, DebatePhase, DebateRoomTab, WorkflowActivity, DebateImages, FollowUpMessage, DebateStage } from "../types";
+import {
+  DebateImages,
+  DebateLine,
+  DebaterConfig,
+  DebatePhase,
+  DebateRoomTab,
+  DebateStage,
+  FollowUpMessage,
+  FocusOption,
+  WorkflowActivity,
+} from "../types";
 
 type RunStatus = "idle" | "running" | "done" | "error";
 
@@ -33,6 +43,13 @@ interface DebateState {
   // Images
   images: DebateImages;
 
+  // Phase 3 configuration
+  focusOptions: FocusOption[];
+  selectedFocusId: string;
+  intensityDraft: "mild" | "balanced" | "intense";
+  userContextDraft: string;
+  isConfigurationReady: boolean;
+
   // Follow-up
   followUpMessages: FollowUpMessage[];
   followUpLiveResponse: string;
@@ -53,6 +70,10 @@ interface DebateState {
   setBackgroundImage(path: string): void;
   setAvatarImages(avatars: Record<string, string>): void;
   setSummaryImage(path: string): void;
+  setFocusOptions(sessionId: string, focusOptions: FocusOption[]): void;
+  setSelectedFocus(selectedFocusId: string): void;
+  setIntensityDraft(intensity: "mild" | "balanced" | "intense"): void;
+  setUserContextDraft(userContext: string): void;
   appendToken(sessionId: string, speaker: string, turnId: number, token: string, stage?: DebateStage): void;
   finalizeTurn(sessionId: string, speaker: string, turnId: number, fullContent: string, stage?: DebateStage): void;
   appendHostSummary(chunk: string): void;
@@ -126,6 +147,12 @@ const initialState = {
     avatars: {} as Record<string, string>,
   } as DebateImages,
 
+  focusOptions: [] as FocusOption[],
+  selectedFocusId: "",
+  intensityDraft: "balanced" as const,
+  userContextDraft: "",
+  isConfigurationReady: false,
+
   // Follow-up
   followUpMessages: [] as FollowUpMessage[],
   followUpLiveResponse: "",
@@ -181,11 +208,30 @@ export const useDebateStore = create<DebateState>((set) => ({
     set((s) => ({
       hostResearch: s.hostResearch + chunk,
     })),
+  setFocusOptions: (sessionId, focusOptions) =>
+    set((s) => ({
+      sessionId: s.sessionId || sessionId,
+      currentTab: "host",
+      focusOptions,
+      selectedFocusId: focusOptions[0]?.id || "",
+      isConfigurationReady: focusOptions.length > 0,
+      activities: pushActivity(
+        s.activities,
+        "关注切面已生成",
+        `主持人已给出 ${focusOptions.length} 个可选讨论切面。`,
+        "done",
+      ),
+    })),
+  setSelectedFocus: (selectedFocusId) => set({ selectedFocusId }),
+  setIntensityDraft: (intensityDraft) => set({ intensityDraft }),
+  setUserContextDraft: (userContextDraft) => set({ userContextDraft }),
   setDebaters: (sessionId, debaters, debateDeadlineMs) =>
     set((s) => ({
       sessionId: s.sessionId || sessionId,
       debateDeadlineMs,
       debaters,
+      currentTab: "debate",
+      isConfigurationReady: false,
       activities: pushActivity(
         s.activities,
         "辩手阵列已建立",
@@ -304,6 +350,7 @@ export const useDebateStore = create<DebateState>((set) => ({
         : s.images,
       activeSpeaker: "",
       activeTurnId: null,
+      isConfigurationReady: false,
       activities: pushActivity(
         s.activities,
         "本轮辩论已完成",

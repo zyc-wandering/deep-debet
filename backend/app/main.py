@@ -9,7 +9,14 @@ from fastapi.responses import PlainTextResponse, StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.config import ensure_directories, settings
-from app.models import DebateModelVariant, DebateStartRequest, DebateStopRequest, DebateStopResponse, FollowUpRequest
+from app.models import (
+    DebateConfigureRequest,
+    DebateModelVariant,
+    DebateStartRequest,
+    DebateStopRequest,
+    DebateStopResponse,
+    FollowUpRequest,
+)
 from app.orchestrator import DebateOrchestrator
 from app.providers.image_generation import ImageGenerationService
 from app.providers.llm_openai_compat import OpenAICompatProvider
@@ -76,9 +83,40 @@ async def start_debate(request: DebateStartRequest) -> StreamingResponse:
     )
 
     async def event_stream() -> AsyncGenerator[str, None]:
-        async for evt in orchestrator.run(request):
+        async for evt in orchestrator.start(request):
             yield sse_event(evt.event, evt.data)
         # Explicit close marker for clients that need final newline flush.
+        yield ": stream-end\n\n"
+
+    headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+    }
+    return StreamingResponse(event_stream(), media_type="text/event-stream", headers=headers)
+
+
+@app.post("/api/debate/configure")
+async def configure_debate(request: DebateConfigureRequest) -> StreamingResponse:
+    session = session_store.get(request.session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    valid_focus_ids = {option.id for option in session.focus_options}
+    if request.pre_debate_config.selected_focus_id not in valid_focus_ids:
+        raise HTTPException(status_code=400, detail="Selected focus option is invalid")
+
+    orchestrator = DebateOrchestrator(
+        llm=_make_llm_provider(session.model_variant),
+        search=search_provider,
+        session_store=session_store,
+        report_writer=report_writer,
+        image_service=image_service,
+    )
+
+    async def event_stream() -> AsyncGenerator[str, None]:
+        async for evt in orchestrator.configure(request):
+            yield sse_event(evt.event, evt.data)
         yield ": stream-end\n\n"
 
     headers = {

@@ -30,5 +30,8 @@ Thumbs.db
 .vscode/
 
 # AI
-.claude/
+.claude/*
 
+# Scripts
+start-dev.ps1
+stop-dev.ps1

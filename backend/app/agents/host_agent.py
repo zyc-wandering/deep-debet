@@ -5,7 +5,7 @@ import json
 import logging
 from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 
-from app.models import DebaterConfig, DebateMessage, FocusDimension, SearchResult, StructuredReport
+from app.models import DebaterConfig, DebateMessage, FocusOption, SearchResult, StructuredReport
 from app.providers.base import LLMProvider, SearchProvider
 
 logger = logging.getLogger(__name__)
@@ -52,7 +52,25 @@ class HostAgent:
 
         return self._fallback_brief(topic, all_results), all_results
 
-    async def create_debaters(self, topic: str, debater_count: int, brief: str) -> List[DebaterConfig]:
+    async def create_debaters(
+        self,
+        topic: str,
+        debater_count: int,
+        brief: str,
+        selected_focus: FocusOption | None = None,
+        intensity: str = "balanced",
+        user_context: str = "",
+    ) -> List[DebaterConfig]:
+        focus_block = ""
+        if selected_focus:
+            focus_block = (
+                "\n本场用户更关心的讨论切面：\n"
+                f"- 名称：{selected_focus.name}\n"
+                f"- 说明：{selected_focus.description}\n"
+                "请确保至少一位辩手把它作为核心关注点或主要争论维度，"
+                "但其他辩手仍需保留不同分析框架，不能全部收缩成单线辩论。\n"
+            )
+        context_block = f"\n用户补充背景：{user_context}\n" if user_context.strip() else ""
         user_prompt = (
             f"针对话题《{topic}》，设计 {debater_count} 位辩手。\n"
             "请只返回 JSON 数组，字段为 name, background, stance, personality, speaking_style, avatar_emoji。\n"
@@ -63,6 +81,10 @@ class HostAgent:
             "4. 每位辩手都应具备专业感，允许承认对方局部合理，但在核心判断上保持鲜明分歧。\n"
             "5. speaking_style 请尽量使用短标签，例如 structured / empirical / blunt / narrative / cross_exam / high_signal。\n"
             "6. 这些辩手不应共享同一种发言模板。不要把他们设计成每轮都用“我同意”“我认为”起手的机械角色；他们应能直接反驳、追问、重定义问题，并推动讨论深入。\n"
+            f"7. intensity={intensity} 只影响交锋强度与表达锐度，不改变结论方向，也不要把角色写成纯喊话型人格。\n"
+            "8. 不要生成“顺着用户想要答案”的角色，所有角色都必须围绕议题本身展开。\n"
+            f"{focus_block}"
+            f"{context_block}"
             f"背景简报：\n{brief[:1200]}"
         )
         try:
@@ -103,28 +125,28 @@ class HostAgent:
 
         return self._fallback_report(topic, brief, messages, references)
 
-    async def extract_dimensions(self, topic: str, brief: str) -> List[FocusDimension]:
-        """Extract focus dimensions from research for pre-debate configuration."""
+    async def extract_focus_options(self, topic: str, brief: str) -> List[FocusOption]:
+        """Extract host-proposed focus options for pre-debate selection."""
         user_prompt = (
             f"话题：{topic}\n\n"
             f"背景简报：\n{brief[:1500]}\n\n"
-            "请基于以上材料，提取 3-5 个辩论应聚焦的核心维度。\n"
-            "每个维度应是一个具体的争议焦点，而非宽泛的概念。\n\n"
+            "请基于以上材料，提取 2-3 个用户可能更关心的讨论切面。\n"
+            "每个切面都必须来自议题本身，例如成长性、执行风险、机会成本、治理复杂度。\n"
+            "不要输出“支持哪边”“反对哪边”或任何答案导向选项。\n\n"
             "请返回 JSON 数组，每个元素包含：\n"
-            '- "name": 维度名称（10字以内）\n'
-            '- "description": 维度说明（50字以内）\n'
-            '- "selected": true（默认选中）\n'
+            '- "name": 切面名称（10字以内）\n'
+            '- "description": 切面说明（50字以内）\n'
         )
         try:
             raw = await self.llm.chat(HOST_SYSTEM_PROMPT, user_prompt)
             data = self._extract_json_array(raw)
-            dimensions = [FocusDimension(**row) for row in data[:5]]
-            if dimensions:
-                return dimensions
+            focus_options = [FocusOption(**row) for row in data[:3]]
+            if len(focus_options) >= 2:
+                return focus_options
         except Exception as exc:
-            logger.warning("Host dimension extraction fallback for topic %r: %s", topic, exc)
+            logger.warning("Host focus option extraction fallback for topic %r: %s", topic, exc)
 
-        return self._fallback_dimensions(topic)
+        return self._fallback_focus_options(topic)
 
     async def summarize_debate_structured(
         self,
@@ -345,28 +367,20 @@ class HostAgent:
                 lines.append(f"- [{r.title}]({r.url})")
         return "\n".join(lines).strip()
 
-    def _fallback_dimensions(self, topic: str) -> List[FocusDimension]:
-        """Fallback dimensions when extraction fails."""
+    def _fallback_focus_options(self, topic: str) -> List[FocusOption]:
+        """Fallback focus options when extraction fails."""
         return [
-            FocusDimension(
+            FocusOption(
                 name="技术可行性",
                 description="该议题在技术层面的实现难度与风险",
-                selected=True,
             ),
-            FocusDimension(
+            FocusOption(
                 name="经济影响",
                 description="对相关产业和就业市场的经济效应",
-                selected=True,
             ),
-            FocusDimension(
+            FocusOption(
                 name="伦理边界",
                 description="涉及的道德伦理问题与社会接受度",
-                selected=True,
-            ),
-            FocusDimension(
-                name="治理机制",
-                description="监管框架与问责制度的完善程度",
-                selected=True,
             ),
         ]
 
