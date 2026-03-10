@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, AsyncGenerator, Dict
+from typing import Any, AsyncGenerator, Dict, List
 
 import httpx
 
@@ -10,10 +10,19 @@ from app.providers.base import LLMProvider
 
 
 class OpenAICompatProvider(LLMProvider):
-    def __init__(self, base_url: str | None = None, api_key: str | None = None, model: str | None = None) -> None:
+    def __init__(
+        self,
+        base_url: str | None = None,
+        api_key: str | None = None,
+        model: str | None = None,
+        api_style: str = "chat_completions",
+        response_tools: List[Dict[str, Any]] | None = None,
+    ) -> None:
         self.base_url = (base_url or settings.openai_base_url).rstrip("/")
         self.api_key = api_key or settings.openai_api_key
         self.model = model or settings.openai_model
+        self.api_style = api_style
+        self.response_tools = response_tools or []
 
     @property
     def enabled(self) -> bool:
@@ -27,6 +36,11 @@ class OpenAICompatProvider(LLMProvider):
         """Stream chat completion from LLM, yielding tokens as they arrive."""
         if not self.enabled:
             raise RuntimeError("OPENAI_API_KEY is missing")
+
+        if self.api_style == "responses":
+            async for token in self._responses_stream(system_prompt, user_prompt):
+                yield token
+            return
 
         payload: Dict[str, Any] = {
             "model": self.model,
@@ -79,6 +93,12 @@ class OpenAICompatProvider(LLMProvider):
         if not self.enabled:
             raise RuntimeError("OPENAI_API_KEY is missing")
 
+        if self.api_style == "responses":
+            parts = []
+            async for token in self._responses_stream(system_prompt, user_prompt):
+                parts.append(token)
+            return "".join(parts).strip()
+
         payload: Dict[str, Any] = {
             "model": self.model,
             "temperature": 0.8,
@@ -126,3 +146,82 @@ class OpenAICompatProvider(LLMProvider):
             parts = [part.get("text", "") for part in content if isinstance(part, dict)]
             content = "".join(parts)
         return str(content).strip()
+
+    async def _responses_stream(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> AsyncGenerator[str, None]:
+        payload: Dict[str, Any] = {
+            "model": self.model,
+            "stream": True,
+            "input": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": user_prompt,
+                        }
+                    ],
+                }
+            ],
+        }
+        if system_prompt.strip():
+            payload["instructions"] = system_prompt
+        if self.response_tools:
+            payload["tools"] = self.response_tools
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+        url = f"{self.base_url}/responses"
+        async with httpx.AsyncClient(timeout=120) as client:
+            async with client.stream("POST", url, headers=headers, json=payload) as response:
+                try:
+                    response.raise_for_status()
+                except httpx.HTTPStatusError as exc:
+                    detail = await response.aread()
+                    detail_text = detail.decode("utf-8", errors="ignore")
+                    raise RuntimeError(
+                        f"LLM responses stream request failed with status {response.status_code}: {detail_text[:500]}"
+                    ) from exc
+
+                async for line in response.aiter_lines():
+                    line = line.strip()
+                    if not line or line.startswith(":") or line.startswith("event:"):
+                        continue
+                    if not line.startswith("data: "):
+                        continue
+
+                    data = line[6:]
+                    if data == "[DONE]":
+                        break
+
+                    try:
+                        chunk = json.loads(data)
+                    except json.JSONDecodeError:
+                        continue
+
+                    event_type = chunk.get("type", "")
+                    if event_type == "response.output_text.delta":
+                        delta = chunk.get("delta", "")
+                        if delta:
+                            yield delta
+                        continue
+
+                    if event_type == "error":
+                        message = (chunk.get("error") or {}).get("message") or chunk.get("message") or "Unknown error"
+                        raise RuntimeError(f"LLM responses stream failed: {message}")
+
+                    if event_type in {"response.completed", "response.failed", "response.incomplete"}:
+                        if event_type != "response.completed":
+                            message = (
+                                ((chunk.get("response") or {}).get("error") or {}).get("message")
+                                or ((chunk.get("response") or {}).get("incomplete_details") or {}).get("reason")
+                                or event_type
+                            )
+                            raise RuntimeError(f"LLM responses stream ended early: {message}")
+                        break

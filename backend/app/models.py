@@ -27,6 +27,11 @@ class DebateStage(str, Enum):
     summary = "summary"
 
 
+class DebateModelVariant(str, Enum):
+    lite = "lite"
+    pro = "pro"
+
+
 class SearchResult(BaseModel):
     title: str
     url: str
@@ -97,6 +102,7 @@ class DebateStartRequest(BaseModel):
     time_limit_sec: int = Field(default=360, ge=60, le=1800)
     max_turns: int = Field(default=24, ge=4, le=80)
     enable_debater_search: bool = False
+    model_variant: DebateModelVariant = DebateModelVariant.lite
     fun_mode: str = "persona_clash"
 
     # Pre-debate configuration (optional - can be set after research)
@@ -144,6 +150,7 @@ class StructuredReport(BaseModel):
 class DebateSession(BaseModel):
     session_id: str = Field(default_factory=lambda: str(uuid4()))
     topic: str
+    model_variant: DebateModelVariant = DebateModelVariant.lite
     state: SessionState = SessionState.running
     started_at: datetime = Field(default_factory=utc_now)
     deadline_at: datetime
@@ -181,4 +188,3 @@ class DebateStopRequest(BaseModel):
 class DebateStopResponse(BaseModel):
     session_id: str
     stopped: bool
-

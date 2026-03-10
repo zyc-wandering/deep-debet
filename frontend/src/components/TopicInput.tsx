@@ -8,7 +8,7 @@ interface Props {
 }
 
 export function TopicInput({ running, onStart, onStop }: Props) {
-  const [topic, setTopic] = useState("AI 是否应该在高风险产品决策中替代人类判断？");
+  const [topic, setTopic] = useState("经济下行, 企业是否该裁员来节约支出");
   const [debaterCount, setDebaterCount] = useState(3);
   const [timeLimitMinInput, setTimeLimitMinInput] = useState("6");
   const [maxTurnsInput, setMaxTurnsInput] = useState("24");
@@ -55,6 +55,7 @@ export function TopicInput({ running, onStart, onStop }: Props) {
       time_limit_sec: timeLimitMin * 60,
       max_turns: maxTurns,
       enable_debater_search: enableDebaterSearch,
+      model_variant: "lite",
       fun_mode: "persona_clash",
     });
   };
@@ -134,6 +135,7 @@ export function TopicInput({ running, onStart, onStop }: Props) {
           />
           <p className="field-hint">最少为当前辩手数量的 3 倍，当前最小值 {minTurns}</p>
         </label>
+
       </div>
 
       <label className="toggle">

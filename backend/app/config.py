@@ -89,6 +89,7 @@ class Settings:
         or _read_key_from_file("KIMI_CODE_API_KEY")
     )
     openai_model: str = os.getenv("OPENAI_MODEL", "")
+    openai_model_pro: str = os.getenv("OPENAI_MODEL_PRO", "deepseek-v3-2-251201")
     openai_max_output_tokens: int = int(os.getenv("OPENAI_MAX_OUTPUT_TOKENS", "32768"))
 
     search_provider: str = os.getenv("SEARCH_PROVIDER", "tavily")

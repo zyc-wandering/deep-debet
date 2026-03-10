@@ -12,6 +12,7 @@ export function ConfigPage({ onStart, isRunning }: Props) {
   const [timeLimit, setTimeLimit] = useState(360);
   const [maxTurns, setMaxTurns] = useState(24);
   const [enableSearch, setEnableSearch] = useState(false);
+  const [modelVariant, setModelVariant] = useState<DebateStartRequest["model_variant"]>("lite");
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -23,6 +24,7 @@ export function ConfigPage({ onStart, isRunning }: Props) {
       time_limit_sec: timeLimit,
       max_turns: maxTurns,
       enable_debater_search: enableSearch,
+      model_variant: modelVariant,
       fun_mode: "persona_clash",
     });
   };
@@ -94,6 +96,18 @@ export function ConfigPage({ onStart, isRunning }: Props) {
               <option value={24}>24 轮</option>
               <option value={36}>36 轮</option>
               <option value={48}>48 轮</option>
+            </select>
+          </div>
+
+          <div className="form-field">
+            <label className="field-label">模型</label>
+            <select
+              value={modelVariant}
+              onChange={(e) => setModelVariant(e.target.value as DebateStartRequest["model_variant"])}
+              disabled={isRunning}
+            >
+              <option value="lite">Lite</option>
+              <option value="pro">Pro</option>
             </select>
           </div>
         </div>

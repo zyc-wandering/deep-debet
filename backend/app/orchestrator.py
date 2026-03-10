@@ -47,6 +47,7 @@ class DebateOrchestrator:
         host = HostAgent(self.llm, self.search)
         session = DebateSession(
             topic=request.topic,
+            model_variant=request.model_variant,
             deadline_at=utc_now(),
             max_turns=request.max_turns,
             pre_debate_config=request.pre_debate_config,

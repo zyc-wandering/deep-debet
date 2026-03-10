@@ -9,7 +9,7 @@ from fastapi.responses import PlainTextResponse, StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.config import ensure_directories, settings
-from app.models import DebateStartRequest, DebateStopRequest, DebateStopResponse, FollowUpRequest
+from app.models import DebateModelVariant, DebateStartRequest, DebateStopRequest, DebateStopResponse, FollowUpRequest
 from app.orchestrator import DebateOrchestrator
 from app.providers.image_generation import ImageGenerationService
 from app.providers.llm_openai_compat import OpenAICompatProvider
@@ -36,11 +36,24 @@ app.add_middleware(
 # Mount static files for images
 app.mount("/api/images", StaticFiles(directory=str(images_dir)), name="images")
 
-llm_provider = OpenAICompatProvider()
 search_provider = TavilySearchProvider()
 session_store = SessionStore()
 report_writer = ReportWriter()
 image_service = ImageGenerationService()
+
+
+def _make_llm_provider(model_variant: DebateModelVariant = DebateModelVariant.lite) -> OpenAICompatProvider:
+    if model_variant == DebateModelVariant.pro:
+        return OpenAICompatProvider(
+            model=settings.openai_model_pro,
+            api_style="responses",
+            response_tools=[{"type": "web_search", "max_keyword": 3}],
+        )
+
+    return OpenAICompatProvider(model=settings.openai_model)
+
+
+llm_provider = _make_llm_provider()
 
 
 def _looks_high_risk(topic: str) -> bool:
@@ -55,7 +68,7 @@ async def start_debate(request: DebateStartRequest) -> StreamingResponse:
         raise HTTPException(status_code=400, detail="Topic rejected by minimal safety policy")
 
     orchestrator = DebateOrchestrator(
-        llm=llm_provider,
+        llm=_make_llm_provider(request.model_variant),
         search=search_provider,
         session_store=session_store,
         report_writer=report_writer,
@@ -113,8 +126,12 @@ async def get_image(filename: str) -> FileResponse:
 @app.post("/api/debate/followup")
 async def follow_up(request: FollowUpRequest) -> StreamingResponse:
     """Post-debate follow-up Q&A with host or specific debater."""
+    session = session_store.get(request.session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
     orchestrator = DebateOrchestrator(
-        llm=llm_provider,
+        llm=_make_llm_provider(session.model_variant),
         search=search_provider,
         session_store=session_store,
         report_writer=report_writer,

@@ -129,6 +129,7 @@ export interface DebateStartRequest {
   time_limit_sec: number;
   max_turns: number;
   enable_debater_search: boolean;
+  model_variant: "lite" | "pro";
   fun_mode: "persona_clash";
   // Pre-debate configuration (optional - set after research)
   pre_debate_config?: PreDebateConfig;
