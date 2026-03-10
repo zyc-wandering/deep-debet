@@ -6,19 +6,28 @@ interface Props {
 }
 
 const phaseText: Record<DebatePhase, string> = {
-  idle: "待命",
-  booting: "初始化",
-  researching: "调研中",
-  assembling: "配置中",
-  generating_background: "生成场景中",
-  debating: "辩论中",
-  summarizing: "总结中",
-  generating_summary_image: "生成海报中",
-  complete: "已完成",
-  error: "异常",
+  idle: "Idle",
+  booting: "Booting",
+  researching: "Researching",
+  assembling: "Assembling",
+  generating_background: "Generating scene",
+  configuring: "Configuring",
+  opening: "Opening",
+  free_debate: "Free debate",
+  closing: "Closing",
+  summarizing: "Summarizing",
+  generating_summary_image: "Generating poster",
+  complete: "Complete",
+  follow_up: "Follow-up",
+  error: "Error",
 };
 
+function isTimedPhase(phase: DebatePhase): boolean {
+  return phase === "opening" || phase === "free_debate" || phase === "closing";
+}
+
 export function Timer({ phase, secondsLeft }: Props) {
+  const showTimer = isTimedPhase(phase);
   const m = Math.floor(Math.max(0, secondsLeft) / 60)
     .toString()
     .padStart(2, "0");
@@ -29,10 +38,10 @@ export function Timer({ phase, secondsLeft }: Props) {
   return (
     <section className="timer">
       <div className="timer-label">
-        <span className={`dot ${phase === "debating" ? "live" : ""}`} />
+        <span className={`dot ${showTimer ? "live" : ""}`} />
         <span>{phaseText[phase]}</span>
       </div>
-      <strong>{phase === "debating" ? `${m}:${s}` : "--:--"}</strong>
+      <strong>{showTimer ? `${m}:${s}` : "--:--"}</strong>
     </section>
   );
 }

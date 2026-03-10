@@ -9,7 +9,7 @@ from fastapi.responses import PlainTextResponse, StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.config import ensure_directories, settings
-from app.models import DebateStartRequest, DebateStopRequest, DebateStopResponse
+from app.models import DebateStartRequest, DebateStopRequest, DebateStopResponse, FollowUpRequest
 from app.orchestrator import DebateOrchestrator
 from app.providers.image_generation import ImageGenerationService
 from app.providers.llm_openai_compat import OpenAICompatProvider
@@ -47,15 +47,6 @@ def _looks_high_risk(topic: str) -> bool:
     high_risk_markers = ["制造炸弹", "入侵系统", "洗钱", "恐怖袭击"]
     t = topic.lower()
     return any(m in t for m in high_risk_markers)
-
-
-@app.get("/api/health")
-async def health() -> dict:
-    return {
-        "status": "ok",
-        "llm_enabled": llm_provider.enabled,
-        "search_enabled": search_provider.enabled,
-    }
 
 
 @app.post("/api/debate/start")
@@ -117,6 +108,34 @@ async def get_image(filename: str) -> FileResponse:
         media_type="image/png",
         filename=filename,
     )
+
+
+@app.post("/api/debate/followup")
+async def follow_up(request: FollowUpRequest) -> StreamingResponse:
+    """Post-debate follow-up Q&A with host or specific debater."""
+    orchestrator = DebateOrchestrator(
+        llm=llm_provider,
+        search=search_provider,
+        session_store=session_store,
+        report_writer=report_writer,
+        image_service=image_service,
+    )
+
+    async def event_stream() -> AsyncGenerator[str, None]:
+        async for evt in orchestrator.follow_up(
+            session_id=request.session_id,
+            target_role=request.target_role,
+            question=request.question,
+        ):
+            yield sse_event(evt.event, evt.data)
+        yield ": stream-end\n\n"
+
+    headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+    }
+    return StreamingResponse(event_stream(), media_type="text/event-stream", headers=headers)
 
 
 @app.get("/api/health")

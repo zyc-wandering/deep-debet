@@ -16,7 +16,9 @@ class ImageGenerationProvider:
 
     # Model: doubao-seedream-5-0-260128
     DEFAULT_MODEL = "doubao-seedream-5-0-260128"
-    DEFAULT_SIZE = "2K"
+    DEFAULT_SIZE = "2048x2048"
+    AVATAR_SIZE = "1920x1920"
+    LANDSCAPE_SIZE = "2560x1440"
 
     def __init__(
         self,
@@ -210,7 +212,7 @@ class ImageGenerationService:
             Local path to the generated image, or None if failed
         """
         prompt = self._generate_avatar_prompt(debater)
-        image_url = await self.provider.generate_image(prompt, size="1:1")
+        image_url = await self.provider.generate_image(prompt, size=ImageGenerationProvider.AVATAR_SIZE)
 
         if not image_url:
             return None
@@ -231,7 +233,7 @@ class ImageGenerationService:
             Local path to the generated image, or None if failed
         """
         prompt = self._generate_background_prompt(topic, debaters)
-        image_url = await self.provider.generate_image(prompt, size="16:9")
+        image_url = await self.provider.generate_image(prompt, size=ImageGenerationProvider.LANDSCAPE_SIZE)
 
         if not image_url:
             return None
@@ -250,7 +252,7 @@ class ImageGenerationService:
             Local path to the generated image, or None if failed
         """
         prompt = self._generate_summary_prompt(topic, debaters=debaters)
-        image_url = await self.provider.generate_image(prompt, size="16:9")
+        image_url = await self.provider.generate_image(prompt, size=ImageGenerationProvider.LANDSCAPE_SIZE)
 
         if not image_url:
             return None

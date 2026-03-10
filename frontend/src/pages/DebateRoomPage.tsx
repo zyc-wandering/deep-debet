@@ -28,7 +28,8 @@ export function DebateRoomPage({ onStop }: Props) {
   const [secondsLeft, setSecondsLeft] = useState(0);
 
   useEffect(() => {
-    if (!debateDeadlineMs || phase !== "debating") {
+    const showTimer = phase === "opening" || phase === "free_debate" || phase === "closing";
+    if (!debateDeadlineMs || !showTimer) {
       setSecondsLeft(0);
       return;
     }
@@ -55,7 +56,8 @@ export function DebateRoomPage({ onStop }: Props) {
 
   // Auto-switch tabs based on phase
   useEffect(() => {
-    if (phase === "debating" && currentTab === "host") {
+    const inDebateStage = phase === "opening" || phase === "free_debate" || phase === "closing";
+    if (inDebateStage && currentTab === "host") {
       setTab("debate");
     } else if (phase === "complete" && currentTab !== "summary") {
       setTab("summary");

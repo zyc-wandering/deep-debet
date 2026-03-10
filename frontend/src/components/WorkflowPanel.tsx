@@ -11,36 +11,13 @@ interface Props {
 }
 
 const steps = [
-  {
-    key: "booting",
-    index: "01",
-    title: "接收命题",
-    description: "创建会话，锁定本轮参数。",
-  },
-  {
-    key: "researching",
-    index: "02",
-    title: "主持人调研",
-    description: "梳理背景、争议焦点与证据脉络。",
-  },
-  {
-    key: "assembling",
-    index: "03",
-    title: "配置辩手",
-    description: "生成分工明确的角色、立场与风格。",
-  },
-  {
-    key: "debating",
-    index: "04",
-    title: "实时交锋",
-    description: "逐轮输出观点、反驳和追问。",
-  },
-  {
-    key: "summarizing",
-    index: "05",
-    title: "总结归档",
-    description: "主持人收束争议并生成最终报告。",
-  },
+  { key: "booting", index: "01", title: "Boot", description: "Create the session and prepare the host workspace." },
+  { key: "researching", index: "02", title: "Research", description: "Collect background, evidence, and open questions." },
+  { key: "assembling", index: "03", title: "Assemble", description: "Generate debaters, roles, and stage setup." },
+  { key: "opening", index: "04", title: "Opening", description: "Each debater states a starting position and judging frame." },
+  { key: "free_debate", index: "05", title: "Free Debate", description: "Debaters challenge each other and deepen the disagreement." },
+  { key: "closing", index: "06", title: "Closing", description: "Each debater gives a final position after the exchange." },
+  { key: "summarizing", index: "07", title: "Summary", description: "The host synthesizes disagreements, consensus, and conditions." },
 ] as const;
 
 const phaseOrder: Record<DebatePhase, number> = {
@@ -49,17 +26,21 @@ const phaseOrder: Record<DebatePhase, number> = {
   researching: 1,
   assembling: 2,
   generating_background: 2.5,
-  debating: 3,
-  summarizing: 4,
-  generating_summary_image: 4.5,
-  complete: 5,
-  error: 5,
+  configuring: 2,
+  opening: 3,
+  free_debate: 4,
+  closing: 5,
+  summarizing: 6,
+  generating_summary_image: 6.5,
+  complete: 7,
+  follow_up: 7,
+  error: 7,
 };
 
 function getResearchExcerpt(text: string) {
   const normalized = text.trim().replace(/\n{3,}/g, "\n\n");
   if (!normalized) {
-    return "提交辩题后，这里会持续滚动显示主持人正在整理的背景信息与判断框架。";
+    return "Host research will appear here once the debate starts.";
   }
   return normalized.slice(-360);
 }
@@ -82,7 +63,7 @@ export function WorkflowPanel({
       <div className="section-head">
         <div>
           <p className="eyebrow">Workflow</p>
-          <h2>发起后的工作流可视化</h2>
+          <h2>Debate execution flow</h2>
         </div>
         <div className="phase-badge">
           <span className="phase-dot" />
@@ -106,6 +87,7 @@ export function WorkflowPanel({
                   : currentOrder === order
                     ? "active"
                     : "pending";
+
             return (
               <li key={step.key} className={`workflow-step ${state}`}>
                 <span className="workflow-step-index">{step.index}</span>
@@ -120,10 +102,10 @@ export function WorkflowPanel({
 
         <div className="workflow-inspector">
           <div className="inspector-card">
-            <span className="inspector-label">当前焦点</span>
+            <span className="inspector-label">Current focus</span>
             {activeSpeaker ? (
               <p className="inspector-main">
-                {activeSpeaker} 正在生成第 {activeTurnId !== null ? activeTurnId + 1 : "-"} 轮发言
+                {activeSpeaker} is generating turn {activeTurnId !== null ? activeTurnId + 1 : "-"}.
               </p>
             ) : (
               <p className="inspector-main">{phaseLabel}</p>
@@ -132,7 +114,7 @@ export function WorkflowPanel({
           </div>
 
           <div className="inspector-card">
-            <span className="inspector-label">主持人研究摘录</span>
+            <span className="inspector-label">Host research excerpt</span>
             <article className="research-excerpt">{excerpt}</article>
           </div>
         </div>
@@ -140,11 +122,11 @@ export function WorkflowPanel({
 
       <div className="activity-log">
         <div className="section-head compact">
-          <h3>过程日志</h3>
-          <span className="muted">最近 {recentActivities.length} 条</span>
+          <h3>Recent activity</h3>
+          <span className="muted">Last {recentActivities.length}</span>
         </div>
         {recentActivities.length === 0 ? (
-          <p className="muted">系统启动后，会把每个关键阶段写入这里。</p>
+          <p className="muted">Activity events will appear here after the run starts.</p>
         ) : (
           <div className="activity-list">
             {recentActivities.map((item) => (

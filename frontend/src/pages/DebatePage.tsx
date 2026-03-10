@@ -31,7 +31,8 @@ export function DebatePage() {
   const [secondsLeft, setSecondsLeft] = useState(0);
 
   useEffect(() => {
-    if (!debateDeadlineMs || phase !== "debating") {
+    const showTimer = phase === "opening" || phase === "free_debate" || phase === "closing";
+    if (!debateDeadlineMs || !showTimer) {
       setSecondsLeft(0);
       return;
     }

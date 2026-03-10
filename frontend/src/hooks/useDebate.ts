@@ -3,7 +3,7 @@ import { useCallback, useMemo, useRef } from "react";
 import { DebatePhase, DebateStartRequest, DebaterConfig } from "../types";
 import { useDebateStore } from "../store/debateStore";
 
-const API_BASE = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000";
+const API_BASE = (import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000").trim();
 
 interface PhasePayload {
   session_id?: string;
@@ -26,24 +26,36 @@ export function useDebate() {
   const api = useMemo(
     () => ({
       start: async (payload: DebateStartRequest) => {
+        console.log("[Debate] Starting debate with payload:", payload);
         abortRef.current?.abort();
         const ctrl = new AbortController();
         abortRef.current = ctrl;
         useDebateStore.getState().start(payload.topic);
+        console.log("[Debate] Store initialized, connecting to SSE...");
+
+        const url = `${API_BASE}/api/debate/start`;
+        const body = JSON.stringify(payload);
+        console.log("[Debate] Sending request to:", url);
+        console.log("[Debate] Request body:", body);
 
         try {
-          await fetchEventSource(`${API_BASE}/api/debate/start`, {
+          await fetchEventSource(url, {
             method: "POST",
             openWhenHidden: true,
             signal: ctrl.signal,
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
+            body: body,
             onopen: async (response) => {
+              console.log("[SSE] Connection opened, status:", response.status);
               if (!response.ok) {
-                throw new Error(`Failed to connect: ${response.status}`);
+                const errorMsg = `Failed to connect: ${response.status}`;
+                console.error("[SSE] Connection failed:", errorMsg);
+                useDebateStore.getState().setError(errorMsg);
+                throw new Error(errorMsg);
               }
             },
             onmessage: async (msg) => {
+              console.log("[SSE] Message received:", msg.event, msg.data);
               if (!msg.event) return;
 
               if (msg.event === "phase") {
@@ -117,18 +129,29 @@ export function useDebate() {
                 return;
               }
 
+              if (msg.event === "stage_change") {
+                const data = JSON.parse(msg.data) as {
+                  session_id: string;
+                  stage: "opening" | "free_debate" | "closing" | "summary";
+                };
+                useDebateStore.getState().setStage(data.stage);
+                return;
+              }
+
               if (msg.event === "debate_turn_end") {
                 const data = JSON.parse(msg.data) as {
                   session_id: string;
                   speaker: string;
                   turn_id: number;
                   full_content: string;
+                  stage?: "opening" | "free_debate" | "closing" | "summary";
                 };
                 useDebateStore.getState().finalizeTurn(
                   data.session_id,
                   data.speaker,
                   data.turn_id,
                   data.full_content,
+                  data.stage,
                 );
                 return;
               }
@@ -165,15 +188,20 @@ export function useDebate() {
               }
             },
             onerror: (error) => {
+              console.error("[SSE] Connection error:", error);
               if (ctrl.signal.aborted) {
+                console.log("[SSE] Connection aborted by user");
                 return;
               }
-              useDebateStore.getState().setError(error.message || "Connection error");
-              throw error;
+              const errorMsg = error.message || "Connection error";
+              useDebateStore.getState().setError(errorMsg);
+              // Don't throw here - let the library handle reconnection
             },
           });
         } catch (error) {
+          console.error("[SSE] Fatal error:", error);
           if (ctrl.signal.aborted) {
+            console.log("[SSE] Request aborted, not showing error");
             return;
           }
           const message = error instanceof Error ? error.message : "Connection error";

@@ -3,10 +3,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-from typing import AsyncGenerator, List, Tuple
+from typing import AsyncGenerator, List, Optional, Tuple
 
 from app.agents.context_manager import ContextManager
-from app.models import DebaterConfig, DebateMessage, SearchResult
+from app.models import DebateMessage, DebateStage, SearchResult
 from app.providers.base import LLMProvider, SearchProvider
 
 logger = logging.getLogger(__name__)
@@ -142,6 +142,222 @@ class DebaterAgent:
             for char in fallback:
                 yield char
                 await asyncio.sleep(0.01)
+
+    async def produce_turn_stream_stage(
+        self,
+        topic: str,
+        brief: str,
+        messages: List[DebateMessage],
+        stage: DebateStage,
+        intensity: str,
+        enable_search: bool,
+    ) -> AsyncGenerator[str, None]:
+        """Stream debate turn with stage-specific prompting."""
+        references: List[SearchResult] = []
+        if enable_search:
+            try:
+                references = await self.search.search(f"{topic} {self.config.stance}", num_results=2)
+            except Exception:
+                references = []
+
+        # Get stage-specific instruction
+        turn_instruction = self._get_stage_instruction(stage, intensity)
+
+        self.rolling_summary = self.context_manager.refresh_rolling_summary(messages)
+        ctx = self.context_manager.build(
+            current_speaker=self.config.name,
+            system_prompt=self._system_prompt_stage(stage, intensity),
+            brief=brief,
+            rolling_summary=self.rolling_summary,
+            messages=messages,
+            turn_instruction=turn_instruction,
+        )
+
+        refs_text = "\n".join([f"- {r.title}: {r.snippet[:120]}" for r in references])
+        user_prompt = ctx.to_prompt()
+        if refs_text:
+            user_prompt = f"{user_prompt}\n\n## Optional Realtime References\n{refs_text}"
+
+        full_content = ""
+        try:
+            async for token in self.llm.chat_stream(self._system_prompt_stage(stage, intensity), user_prompt):
+                full_content += token
+                yield token
+        except Exception as exc:
+            logger.warning("Debater LLM stream failed for %s: %s", self.config.name, exc)
+            fallback = self._fallback_turn_stage(topic, brief, messages, references, stage)
+            for char in fallback:
+                yield char
+                await asyncio.sleep(0.01)
+
+    def _system_prompt_stage(self, stage: DebateStage, intensity: str) -> str:
+        """Generate system prompt for specific stage and intensity."""
+        base_prompt = (
+            f"你是辩手 {self.config.name}。\n"
+            f"背景：{self.config.background}\n"
+            f"立场：{self.config.stance}\n"
+            f"公众形象与表达偏好：{self.config.personality}\n"
+        )
+
+        stage_guidance = {
+            DebateStage.opening: (
+                "这是开场陈述阶段。请直接阐述你的核心立场和论证框架。\n"
+                "不要回应他人（因为还没有人发言），专注建立你的分析基础。\n"
+                "明确表达：1)你对核心问题的判断；2)你的分析框架；3)预期的关键分歧点。"
+            ),
+            DebateStage.free_debate: (
+                "这是自由辩论阶段。你的发言要像真实、有判断力的专业人士。\n"
+                "要求：\n"
+                "1. 不要把'我同意某某''我认为'当作固定起手式。必要时可以承认对方局部合理，但不必每轮都先礼貌铺垫。\n"
+                "2. 可以直接反驳、追问、拆解定义、补充机制、比较代价。\n"
+                "3. 每一轮至少完成以下之一：指出一个关键漏洞；补进一个新维度；提出一个可检验标准；把争论推进到下一层条件判断。\n"
+                "4. 如果某个分歧已经重复出现，不要重说原话。改为补充边界、条件、优先级、代价分配、执行路径或判定标准。\n"
+                "5. 允许锋利，但不要进行人身攻击、阴谋化表演、喊口号或纯情绪输出。"
+            ),
+            DebateStage.closing: (
+                "这是总结陈词阶段。请回应以下要求：\n"
+                "1. 明确指出辩论中最强的反对意见是什么，以及你如何回应。\n"
+                "2. 说明你的立场在辩论过程中是否有调整，或为什么保持稳定。\n"
+                "3. 不要简单重复之前的观点，要展示交锋后的立场澄清或升级。\n"
+                "4. 给出一个清晰的结论：在什么条件下你的方案可行，在什么条件下不可行。"
+            ),
+        }
+
+        intensity_modifier = {
+            "mild": "语气保持克制和学术性，避免过度对抗。",
+            "balanced": "保持专业辩论的紧张感，但聚焦议题而非人身。",
+            "intense": "可以更加直接和锋利，但仍必须基于论证而非情绪。",
+        }
+
+        guidance = stage_guidance.get(stage, stage_guidance[DebateStage.free_debate])
+        intensity_text = intensity_modifier.get(intensity, intensity_modifier["balanced"])
+
+        length_guidance = "输出 180-280 字中文，信息密度高，句式自然，避免重复口头禅。"
+
+        return f"{base_prompt}\n{guidance}\n{intensity_text}\n{length_guidance}"
+
+    def _get_stage_instruction(self, stage: DebateStage, intensity: str) -> str:
+        """Get turn instruction for specific stage."""
+        instructions = {
+            DebateStage.opening: (
+                "请给出开场陈述。\n"
+                "直接阐述你的核心立场和论证框架，不要回应他人。\n"
+                "建立你的分析基础，让旁听者理解你的判断从何而来。"
+            ),
+            DebateStage.free_debate: (
+                "请给出本轮发言。\n"
+                "优先挑一个最值得推进的分歧，不必机械回应最近一句。\n"
+                "你可以直接反驳，也可以先重定义问题、拆开条件、指出被跳过的执行成本或责任链。\n"
+                "如果对方某个局部判断合理，只需顺手承认后立刻推进，不要把让步写成固定开场。\n"
+                "本轮必须带来推进：新增一个分析维度、明确一个判定标准、补一段因果机制，或把争论推进到更具体的场景。\n"
+                "不要重复自己的旧句式，不要空泛表态，不要变成骂街。"
+            ),
+            DebateStage.closing: (
+                "请给出总结陈词。\n"
+                "必须回应以下三点：\n"
+                "1. 指出对方最强的反对意见，并给出你的回应。\n"
+                "2. 说明你的立场在辩论中是否有所调整或为什么保持不变。\n"
+                "3. 给出清晰的结论：什么条件下可行，什么条件下不可行。\n"
+                "不要简单重复之前的话，要展示交锋后的立场澄清。"
+            ),
+        }
+        return instructions.get(stage, instructions[DebateStage.free_debate])
+
+    async def follow_up_stream(
+        self,
+        topic: str,
+        brief: str,
+        messages: List[DebateMessage],
+        question: str,
+    ) -> AsyncGenerator[str, None]:
+        """Stream follow-up response preserving persona."""
+        # Build context from previous debate
+        own_messages = [m for m in messages if m.speaker == self.config.name]
+        own_positions = "\n".join([f"- {m.content[:150]}..." for m in own_messages[-3:]])
+
+        system_prompt = (
+            f"你是辩手 {self.config.name}。\n"
+            f"背景：{self.config.background}\n"
+            f"立场：{self.config.stance}\n"
+            f"公众形象与表达偏好：{self.config.personality}\n\n"
+            "辩论已经结束，现在用户想向你提问。要求：\n"
+            "1. 保持你在辩论中的立场、语气和分析框架。\n"
+            "2. 基于你在辩论中的发言，回答用户的问题。\n"
+            "3. 可以澄清、补充或细化，但不要突然改变立场。\n"
+            "4. 回答控制在 200 字以内，信息密度高。"
+        )
+
+        user_prompt = (
+            f"话题：{topic}\n\n"
+            f"你在辩论中的主要观点：\n{own_positions}\n\n"
+            f"用户问题：{question}\n\n"
+            "请基于你的立场回答。"
+        )
+
+        full_response = ""
+        try:
+            async for token in self.llm.chat_stream(system_prompt, user_prompt):
+                full_response += token
+                yield token
+
+            if not full_response.strip():
+                raise ValueError("Empty response")
+        except Exception as exc:
+            logger.warning("Debater follow-up stream failed for %s: %s", self.config.name, exc)
+            fallback = self._fallback_follow_up(question)
+            for char in fallback:
+                yield char
+                await asyncio.sleep(0.01)
+
+    def _fallback_turn_stage(
+        self,
+        topic: str,
+        brief: str,
+        messages: List[DebateMessage],
+        references: List[SearchResult],
+        stage: DebateStage,
+    ) -> str:
+        """Fallback turn based on stage."""
+        if stage == DebateStage.opening:
+            return self._fallback_opening(topic)
+        elif stage == DebateStage.closing:
+            return self._fallback_closing(topic, messages)
+        else:
+            return self._fallback_turn(topic, brief, messages, references)
+
+    def _fallback_opening(self, topic: str) -> str:
+        """Fallback for opening statement."""
+        return (
+            f"关于「{topic}」，我的立场很明确：{self.config.stance}。"
+            f"作为{self.config.background}，我认为关键在于厘清责任分配和可检验标准。"
+            "后续辩论中我会围绕边界条件、执行成本和问责机制展开论证。"
+        )
+
+    def _fallback_closing(self, topic: str, messages: List[DebateMessage]) -> str:
+        """Fallback for closing statement."""
+        own_messages = [m for m in messages if m.speaker == self.config.name]
+        if own_messages:
+            return (
+                f"总结我的立场：{self.config.stance}。"
+                "对方最强的反对意见我已经回应——关键在于边界条件是否清晰。"
+                "我的立场在交锋中没有改变，因为核心判断仍然成立："
+                "在没有明确问责机制前，贸然推进风险过高。"
+                "只有当监督框架和止损机制到位时，这一方案才具备可行性。"
+            )
+        return (
+            f"关于「{topic}」，我坚持{self.config.stance}。"
+            "对方若认为可行，必须回答：谁来承担失败成本，如何纠错。"
+            "这些问题没有明确答案前，我的立场不会改变。"
+        )
+
+    def _fallback_follow_up(self, question: str) -> str:
+        """Fallback for follow-up response."""
+        return (
+            f"关于您的问题「{question[:30]}...」，"
+            f"我作为{self.config.background}，仍坚持我在辩论中的立场。"
+            "具体回答取决于边界条件是否清晰、问责机制是否到位。"
+            "这些问题不解决，我的判断不会改变。"
+        )
 
     def _fallback_turn(
         self,

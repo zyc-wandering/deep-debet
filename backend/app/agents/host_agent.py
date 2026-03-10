@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
-from typing import List, Tuple
+from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 
-from app.models import DebaterConfig, DebateMessage, SearchResult
+from app.models import DebaterConfig, DebateMessage, FocusDimension, SearchResult, StructuredReport
 from app.providers.base import LLMProvider, SearchProvider
 
 logger = logging.getLogger(__name__)
@@ -102,6 +103,102 @@ class HostAgent:
 
         return self._fallback_report(topic, brief, messages, references)
 
+    async def extract_dimensions(self, topic: str, brief: str) -> List[FocusDimension]:
+        """Extract focus dimensions from research for pre-debate configuration."""
+        user_prompt = (
+            f"话题：{topic}\n\n"
+            f"背景简报：\n{brief[:1500]}\n\n"
+            "请基于以上材料，提取 3-5 个辩论应聚焦的核心维度。\n"
+            "每个维度应是一个具体的争议焦点，而非宽泛的概念。\n\n"
+            "请返回 JSON 数组，每个元素包含：\n"
+            '- "name": 维度名称（10字以内）\n'
+            '- "description": 维度说明（50字以内）\n'
+            '- "selected": true（默认选中）\n'
+        )
+        try:
+            raw = await self.llm.chat(HOST_SYSTEM_PROMPT, user_prompt)
+            data = self._extract_json_array(raw)
+            dimensions = [FocusDimension(**row) for row in data[:5]]
+            if dimensions:
+                return dimensions
+        except Exception as exc:
+            logger.warning("Host dimension extraction fallback for topic %r: %s", topic, exc)
+
+        return self._fallback_dimensions(topic)
+
+    async def summarize_debate_structured(
+        self,
+        topic: str,
+        brief: str,
+        messages: List[DebateMessage],
+        references: List[SearchResult],
+    ) -> StructuredReport:
+        """Generate structured report with argument analysis."""
+        transcript = "\n".join([f"- {m.speaker}: {m.content}" for m in messages])
+
+        user_prompt = (
+            f"话题：{topic}\n\n"
+            f"背景简报：\n{brief}\n\n"
+            f"辩论记录：\n{transcript[:6000]}\n\n"
+            "请输出结构化报告，包含以下部分：\n"
+            "1. background_summary: 背景摘要（200字以内）\n"
+            "2. core_arguments: 各方核心观点数组，每个包含 speaker, stance, key_points（要点数组）\n"
+            "3. clash_points: 交锋焦点数组，每个包含 topic 和 positions（各方立场字典）\n"
+            "4. synthesis: 综合分析（300字以内）\n"
+            "5. host_conclusion: 主持人结论（150字以内）\n"
+            "6. argument_nodes: 论证节点数组，每个包含 speaker, content, turn_index, targets（回应的节点ID数组）, status（claim/support/attack/concession）, focal_point\n\n"
+            "请返回 JSON 格式。"
+        )
+
+        try:
+            raw = await self.llm.chat(HOST_SYSTEM_PROMPT, user_prompt)
+            data = self._normalize_structured_report_data(self._extract_json_object(raw))
+            return StructuredReport(**data)
+        except Exception as exc:
+            logger.warning("Host structured summary fallback for topic %r: %s", topic, exc)
+
+        return self._fallback_structured_report(topic, brief, messages)
+
+    async def follow_up_stream(
+        self,
+        topic: str,
+        brief: str,
+        messages: List[DebateMessage],
+        question: str,
+        structured_report: Optional[StructuredReport],
+    ) -> AsyncGenerator[str, None]:
+        """Stream host follow-up response with neutrality."""
+        transcript = "\n".join([f"- {m.speaker}: {m.content}" for m in messages[-10:]])
+        synthesis = structured_report.synthesis if structured_report else ""
+
+        user_prompt = (
+            f"话题：{topic}\n\n"
+            f"背景简报：\n{brief[:800]}\n\n"
+            f"辩论综合：\n{synthesis[:500]}\n\n"
+            f"近期辩论记录：\n{transcript[:2000]}\n\n"
+            f"用户问题：{question}\n\n"
+            "作为主持人，请基于以上材料回答用户问题。要求：\n"
+            "1. 保持中立立场，不偏袒任何一方\n"
+            "2. 基于辩论记录和背景材料给出分析\n"
+            "3. 指出哪些部分有明确证据，哪些属于推测\n"
+            "4. 回答控制在 300 字以内，信息密度高\n"
+        )
+
+        full_response = ""
+        try:
+            async for token in self.llm.chat_stream(HOST_SYSTEM_PROMPT, user_prompt):
+                full_response += token
+                yield token
+
+            if not full_response.strip():
+                raise ValueError("Empty response")
+        except Exception as exc:
+            logger.warning("Host follow-up stream fallback: %s", exc)
+            fallback = self._fallback_follow_up(question, messages)
+            for char in fallback:
+                yield char
+                await asyncio.sleep(0.01)
+
     def _extract_json_array(self, raw: str) -> List[dict]:
         text = raw.strip()
         if "```" in text:
@@ -118,6 +215,41 @@ class HostAgent:
         if not isinstance(parsed, list):
             raise ValueError("Expected list")
         return parsed
+
+    def _extract_json_object(self, raw: str) -> dict:
+        text = raw.strip()
+        if "```" in text:
+            parts = text.split("```")
+            body = parts[1] if len(parts) > 1 else text
+            if body.strip().startswith("json"):
+                body = body.strip()[4:]
+            text = body.strip()
+        start = text.find("{")
+        end = text.rfind("}")
+        if start >= 0 and end > start:
+            text = text[start : end + 1]
+        parsed = json.loads(text)
+        if not isinstance(parsed, dict):
+            raise ValueError("Expected object")
+        return parsed
+
+    def _normalize_structured_report_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        normalized = dict(data)
+        raw_nodes = normalized.get("argument_nodes") or []
+        nodes: List[Dict[str, Any]] = []
+
+        for raw_node in raw_nodes:
+            if not isinstance(raw_node, dict):
+                continue
+
+            node = dict(raw_node)
+            if "id" in node and node["id"] is not None:
+                node["id"] = str(node["id"])
+            node["targets"] = [str(target) for target in (node.get("targets") or []) if target is not None]
+            nodes.append(node)
+
+        normalized["argument_nodes"] = nodes
+        return normalized
 
     def _fallback_brief(self, topic: str, results: List[SearchResult] | None = None) -> str:
         bullets = []
@@ -212,3 +344,64 @@ class HostAgent:
             for r in references[:12]:
                 lines.append(f"- [{r.title}]({r.url})")
         return "\n".join(lines).strip()
+
+    def _fallback_dimensions(self, topic: str) -> List[FocusDimension]:
+        """Fallback dimensions when extraction fails."""
+        return [
+            FocusDimension(
+                name="技术可行性",
+                description="该议题在技术层面的实现难度与风险",
+                selected=True,
+            ),
+            FocusDimension(
+                name="经济影响",
+                description="对相关产业和就业市场的经济效应",
+                selected=True,
+            ),
+            FocusDimension(
+                name="伦理边界",
+                description="涉及的道德伦理问题与社会接受度",
+                selected=True,
+            ),
+            FocusDimension(
+                name="治理机制",
+                description="监管框架与问责制度的完善程度",
+                selected=True,
+            ),
+        ]
+
+    def _fallback_structured_report(
+        self,
+        topic: str,
+        brief: str,
+        messages: List[DebateMessage],
+    ) -> StructuredReport:
+        """Fallback structured report when generation fails."""
+        by_speaker: Dict[str, List[str]] = {}
+        for msg in messages:
+            by_speaker.setdefault(msg.speaker, []).append(msg.content)
+
+        core_arguments = []
+        for speaker, contents in by_speaker.items():
+            core_arguments.append({
+                "speaker": speaker,
+                "stance": "参见发言记录",
+                "key_points": [contents[0][:100] + "..."] if contents else ["暂无观点"],
+            })
+
+        return StructuredReport(
+            background_summary=brief[:200] if brief else f"关于{topic}的背景",
+            core_arguments=core_arguments,
+            clash_points=[],
+            synthesis="辩论涉及多个维度，各方立场存在实质性分歧。",
+            host_conclusion="该议题不存在单一正确答案，建议按场景分层决策。",
+            argument_nodes=[],
+        )
+
+    def _fallback_follow_up(self, question: str, messages: List[DebateMessage]) -> str:
+        """Fallback follow-up response."""
+        return (
+            f"关于您的问题「{question[:30]}...」，"
+            "基于现有辩论记录，主持人认为这是一个需要更多证据支持的问题。"
+            "建议参考辩论中各方提出的具体论据和判定标准。"
+        )

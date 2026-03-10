@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { DebateLine, DebaterConfig, DebatePhase, DebateRoomTab, WorkflowActivity, DebateImages } from "../types";
+import { DebateLine, DebaterConfig, DebatePhase, DebateRoomTab, WorkflowActivity, DebateImages, FollowUpMessage, DebateStage } from "../types";
 
 type RunStatus = "idle" | "running" | "done" | "error";
 
@@ -26,8 +26,18 @@ interface DebateState {
   activeSpeaker: string;
   activeTurnId: number | null;
 
+  // Stage tracking
+  currentStage: DebateStage | null;
+  stageLines: Record<DebateStage, DebateLine[]>;
+
   // Images
   images: DebateImages;
+
+  // Follow-up
+  followUpMessages: FollowUpMessage[];
+  followUpLiveResponse: string;
+  followUpTarget: string | null;
+  isFollowUpStreaming: boolean;
 
   // Navigation
   setTab(tab: DebateRoomTab): void;
@@ -36,20 +46,28 @@ interface DebateState {
   start(topic: string): void;
   setSessionId(sessionId: string): void;
   setPhase(phase: DebatePhase, label: string, detail?: string): void;
+  setStage(stage: DebateStage): void;
   addActivity(title: string, detail?: string, tone?: WorkflowActivity["tone"]): void;
   appendHostResearch(chunk: string): void;
   setDebaters(sessionId: string, debaters: DebaterConfig[], debateDeadlineMs: number | null): void;
   setBackgroundImage(path: string): void;
   setAvatarImages(avatars: Record<string, string>): void;
   setSummaryImage(path: string): void;
-  appendToken(sessionId: string, speaker: string, turnId: number, token: string): void;
-  finalizeTurn(sessionId: string, speaker: string, turnId: number, fullContent: string): void;
+  appendToken(sessionId: string, speaker: string, turnId: number, token: string, stage?: DebateStage): void;
+  finalizeTurn(sessionId: string, speaker: string, turnId: number, fullContent: string, stage?: DebateStage): void;
   appendHostSummary(chunk: string): void;
   markStopRequested(): void;
   setDone(sessionId: string, reportPath: string, summaryImagePath?: string): void;
   setReportMarkdown(text: string): void;
   setError(msg: string): void;
   reset(): void;
+
+  // Follow-up actions
+  setFollowUpTarget(target: string | null): void;
+  addFollowUpMessage(message: FollowUpMessage): void;
+  appendFollowUpToken(followUpId: string, token: string): void;
+  finalizeFollowUp(followUpId: string, fullResponse: string): void;
+  setFollowUpStreaming(isStreaming: boolean): void;
 }
 
 const makeActivity = (
@@ -100,9 +118,19 @@ const initialState = {
   activeSpeaker: "",
   activeTurnId: null as number | null,
 
+  // Stage tracking
+  currentStage: null as DebateStage | null,
+  stageLines: {} as Record<DebateStage, DebateLine[]>,
+
   images: {
     avatars: {} as Record<string, string>,
   } as DebateImages,
+
+  // Follow-up
+  followUpMessages: [] as FollowUpMessage[],
+  followUpLiveResponse: "",
+  followUpTarget: null as string | null,
+  isFollowUpStreaming: false,
 };
 
 export const useDebateStore = create<DebateState>((set) => ({
@@ -134,6 +162,16 @@ export const useDebateStore = create<DebateState>((set) => ({
       phaseLabel: label,
       phaseDetail: detail,
       activities: pushActivity(s.activities, label, detail, phase === "error" ? "error" : "live"),
+    })),
+  setStage: (stage) =>
+    set((s) => ({
+      currentStage: stage,
+      activities: pushActivity(
+        s.activities,
+        `进入${stage === "opening" ? "开场" : stage === "free_debate" ? "自由辩论" : stage === "closing" ? "总结" : "总结"}阶段`,
+        "",
+        "live"
+      ),
     })),
   addActivity: (title, detail = "", tone = "neutral") =>
     set((s) => ({
@@ -185,7 +223,7 @@ export const useDebateStore = create<DebateState>((set) => ({
         "done",
       ),
     })),
-  appendToken: (sessionId, speaker, turnId, token) => {
+  appendToken: (sessionId, speaker, turnId, token, stage) => {
     const key = `${speaker}-${turnId}`;
     set((s) => {
       const firstTokenOfTurn = !s.liveBuffers[key];
@@ -208,17 +246,24 @@ export const useDebateStore = create<DebateState>((set) => ({
       };
     });
   },
-  finalizeTurn: (sessionId, speaker, turnId, fullContent) => {
+  finalizeTurn: (sessionId, speaker, turnId, fullContent, stage) => {
     const key = `${speaker}-${turnId}`;
     set((s) => {
       const nextBuffers = { ...s.liveBuffers };
       delete nextBuffers[key];
+      const newLine: DebateLine = { key, speaker, turnId, content: fullContent, stage };
+      const stageKey = stage || "free_debate";
+      const currentStageLines = s.stageLines[stageKey] || [];
       return {
         sessionId: s.sessionId || sessionId,
         activeSpeaker: s.activeSpeaker === speaker && s.activeTurnId === turnId ? "" : s.activeSpeaker,
         activeTurnId: s.activeSpeaker === speaker && s.activeTurnId === turnId ? null : s.activeTurnId,
         liveBuffers: nextBuffers,
-        lines: [...s.lines, { key, speaker, turnId, content: fullContent }],
+        lines: [...s.lines, newLine],
+        stageLines: {
+          ...s.stageLines,
+          [stageKey]: [...currentStageLines, newLine],
+        },
         activities: pushActivity(
           s.activities,
           `${speaker} 完成发言`,
@@ -277,4 +322,40 @@ export const useDebateStore = create<DebateState>((set) => ({
       activities: pushActivity(s.activities, "发生错误", msg, "error"),
     })),
   reset: () => set({ ...initialState }),
+
+  // Follow-up actions
+  setFollowUpTarget: (target) => set({ followUpTarget: target }),
+  addFollowUpMessage: (message) =>
+    set((s) => ({
+      followUpMessages: [...s.followUpMessages, message],
+      followUpLiveResponse: "",
+      activities: pushActivity(
+        s.activities,
+        `向 ${message.target_role} 提问`,
+        message.question.slice(0, 50) + (message.question.length > 50 ? "..." : ""),
+        "live"
+      ),
+    })),
+  appendFollowUpToken: (followUpId, token) =>
+    set((s) => ({
+      followUpLiveResponse: s.followUpLiveResponse + token,
+      followUpMessages: s.followUpMessages.map((m) =>
+        m.id === followUpId ? { ...m, response: m.response + token } : m
+      ),
+    })),
+  finalizeFollowUp: (followUpId, fullResponse) =>
+    set((s) => ({
+      followUpLiveResponse: "",
+      isFollowUpStreaming: false,
+      followUpMessages: s.followUpMessages.map((m) =>
+        m.id === followUpId ? { ...m, response: fullResponse, isStreaming: false } : m
+      ),
+      activities: pushActivity(
+        s.activities,
+        "跟进问题已回答",
+        fullResponse.slice(0, 50) + (fullResponse.length > 50 ? "..." : ""),
+        "done"
+      ),
+    })),
+  setFollowUpStreaming: (isStreaming) => set({ isFollowUpStreaming: isStreaming }),
 }));
