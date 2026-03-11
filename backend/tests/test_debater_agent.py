@@ -2,7 +2,7 @@ import pytest
 
 from app.agents.context_manager import ContextManager
 from app.agents.debater_agent import DebaterAgent
-from app.models import DebaterConfig, DebateMessage
+from app.models import DebaterConfig, DebateMessage, DebateStage
 from app.providers.base import LLMProvider, SearchProvider
 
 
@@ -76,7 +76,7 @@ async def test_pragmatic_fallback_mentions_cost_or_exit_path():
             stance="对 AI 是否应该替代初级分析师的部分工作 持务实落地态度",
             personality="结果导向，善于算账",
             speaking_style="blunt",
-            avatar_emoji="账",
+            avatar_emoji="财",
         ),
         llm=FailingLLM(),
         search=EmptySearch(),
@@ -125,3 +125,25 @@ async def test_fallback_does_not_default_to_agreement_template():
 
     assert not text.startswith("我同意")
     assert any(keyword in text for keyword in ["边界", "责任", "成本", "止损", "标准", "代价", "条件", "证据"])
+
+
+def test_stage_prompt_requires_concession_and_rebuild_when_broken():
+    agent = DebaterAgent(
+        config=DebaterConfig(
+            name="交叉质询派 Xu",
+            background="独立评论者",
+            stance="对开放议题保持高压质疑立场",
+            personality="擅长拆前提与追问漏洞",
+            speaking_style="cross_exam",
+            avatar_emoji="X",
+        ),
+        llm=FailingLLM(),
+        search=EmptySearch(),
+        context_manager=ContextManager(),
+    )
+
+    prompt = agent._system_prompt_stage(DebateStage.free_debate, "intense", "执行风险", "")
+    instruction = agent._get_stage_instruction(DebateStage.free_debate, "执行风险", "")
+
+    assert "concede" in prompt.lower()
+    assert "重建" in instruction

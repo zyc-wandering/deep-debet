@@ -8,6 +8,7 @@ from typing import AsyncGenerator, List, Optional
 from app.agents.context_manager import ContextManager
 from app.agents.debater_agent import DebaterAgent
 from app.agents.host_agent import HostAgent
+from app.execution.turn_executor import DebaterTurnExecutor
 from app.models import (
     DebaterConfig,
     DebateConfigureRequest,
@@ -23,12 +24,34 @@ from app.models import (
 )
 from app.providers.base import LLMProvider, SearchProvider
 from app.providers.image_generation import ImageGenerationService
+from app.stage import (
+    ClosingStageExecutor,
+    FreeDebateStageExecutor,
+    OpeningStageExecutor,
+    StageRegistry,
+    SummaryStageExecutor,
+)
+from app.stage.base import StageContext
 from app.storage.report_writer import ReportWriter
 from app.storage.session_store import SessionStore
 from app.utils.formatting import chunk_text
 
 
 class DebateOrchestrator:
+    """Refactored debate orchestrator using stage-based architecture.
+
+    Responsibilities:
+    - Lifecycle management (start, configure, stop)
+    - SSE event generation
+    - Coordination of stage execution via StageRegistry
+
+    Previous monolithic stage logic has been extracted to:
+    - OpeningStageExecutor
+    - FreeDebateStageExecutor
+    - ClosingStageExecutor
+    - SummaryStageExecutor
+    """
+
     def __init__(
         self,
         llm: LLMProvider,
@@ -36,12 +59,25 @@ class DebateOrchestrator:
         session_store: SessionStore,
         report_writer: ReportWriter,
         image_service: ImageGenerationService | None = None,
+        stage_registry: StageRegistry | None = None,
+        turn_executor: DebaterTurnExecutor | None = None,
     ) -> None:
         self.llm = llm
         self.search = search
         self.session_store = session_store
         self.report_writer = report_writer
         self.image_service = image_service or ImageGenerationService()
+        self.turn_executor = turn_executor or DebaterTurnExecutor()
+        self.stage_registry = stage_registry or self._create_default_stage_registry()
+
+    def _create_default_stage_registry(self) -> StageRegistry:
+        """创建默认的阶段注册表"""
+        registry = StageRegistry()
+        registry.register(OpeningStageExecutor(self.turn_executor))
+        registry.register(FreeDebateStageExecutor(turn_executor=self.turn_executor))
+        registry.register(ClosingStageExecutor(self.turn_executor))
+        # SummaryStageExecutor 需要特殊依赖，在 configure 中手动处理
+        return registry
 
     async def run(self, request: DebateStartRequest) -> AsyncGenerator[SSEEvent, None]:
         """Backward-compatible alias for the Phase 3 start flow."""
@@ -199,7 +235,8 @@ class DebateOrchestrator:
             user_context = request.pre_debate_config.user_context
             intensity = request.pre_debate_config.intensity
 
-            async for event in self._run_opening(
+            # Execute debate stages using the stage pipeline
+            async for event in self._execute_debate_stages(
                 session=session,
                 debater_agents=debater_agents,
                 topic=session.topic,
@@ -207,43 +244,12 @@ class DebateOrchestrator:
                 intensity=intensity,
                 selected_focus=selected_focus_name,
                 user_context=user_context,
-            ):
-                yield event
-
-            async for event in self._run_free_debate(
-                session=session,
-                debater_agents=debater_agents,
-                topic=session.topic,
-                brief=session.brief,
-                enable_search=session.enable_debater_search,
-                intensity=intensity,
                 max_turns=session.max_turns,
-                selected_focus=selected_focus_name,
-                user_context=user_context,
+                enable_search=session.enable_debater_search,
             ):
                 yield event
 
-            async for event in self._run_closing(
-                session=session,
-                debater_agents=debater_agents,
-                topic=session.topic,
-                brief=session.brief,
-                intensity=intensity,
-                selected_focus=selected_focus_name,
-                user_context=user_context,
-            ):
-                yield event
-
-            async for event in self._run_summary(
-                session=session,
-                topic=session.topic,
-                brief=session.brief,
-                host=host,
-                references=session.research_references,
-                report_writer=self.report_writer,
-            ):
-                yield event
-
+            # Generate summary image
             yield self._phase_event(
                 session.session_id,
                 "generating_summary_image",
@@ -276,7 +282,7 @@ class DebateOrchestrator:
             self.session_store.update(session)
             yield self._error_event(session.session_id, "configure", str(exc))
 
-    async def _run_opening(
+    async def _execute_debate_stages(
         self,
         session: DebateSession,
         debater_agents: List[DebaterAgent],
@@ -285,232 +291,117 @@ class DebateOrchestrator:
         intensity: str,
         selected_focus: str,
         user_context: str,
+        max_turns: int,
+        enable_search: bool,
     ) -> AsyncGenerator[SSEEvent, None]:
-        session.current_stage = DebateStage.opening
-        self.session_store.update(session)
+        """Execute debate stages using the stage pipeline."""
 
-        yield self._phase_event(
-            session.session_id,
+        # Create stage pipeline
+        stage_pipeline = self.stage_registry.create_pipeline([
             "opening",
-            "Opening statements",
-            "Each debater establishes a starting position and analysis frame.",
-        )
-        yield self._stage_change_event(session.session_id, "opening", "Opening statements")
+            "free_debate",
+            "closing",
+        ])
+
+        # Update free debate stage with max_turns and search settings
+        for stage in stage_pipeline:
+            if isinstance(stage, FreeDebateStageExecutor):
+                stage.max_turns = max_turns
+                stage._enable_search = enable_search
+                stage._search_provider = self.search
 
         turn_id = 0
-        for agent in debater_agents:
+
+        for stage_executor in stage_pipeline:
             if session.stop_requested or self._deadline_passed(session):
                 break
-            async for event in self._stream_debater_turn(
+
+            async for event in self._execute_stage(
+                stage_executor=stage_executor,
                 session=session,
-                agent=agent,
+                debater_agents=debater_agents,
+                turn_id=turn_id,
                 topic=topic,
                 brief=brief,
-                turn_id=turn_id,
-                stage=DebateStage.opening,
                 intensity=intensity,
                 selected_focus=selected_focus,
                 user_context=user_context,
             ):
                 yield event
-            turn_id += 1
 
-    async def _run_free_debate(
-        self,
-        session: DebateSession,
-        debater_agents: List[DebaterAgent],
-        topic: str,
-        brief: str,
-        enable_search: bool,
-        intensity: str,
-        max_turns: int,
-        selected_focus: str,
-        user_context: str,
-    ) -> AsyncGenerator[SSEEvent, None]:
-        session.current_stage = DebateStage.free_debate
-        self.session_store.update(session)
+            turn_id = len(session.messages)
 
-        yield self._phase_event(
-            session.session_id,
-            "free_debate",
-            "Free debate",
-            "Debaters contest each other while keeping the selected focus in play.",
-        )
-        yield self._stage_change_event(session.session_id, "free_debate", "Free debate")
-
-        turn_id = len([message for message in session.messages if message.stage == DebateStage.opening])
-        free_debate_turn = 0
-
-        while free_debate_turn < max_turns:
-            if session.stop_requested or self._deadline_passed(session):
-                break
-
-            for agent in debater_agents:
-                if session.stop_requested or self._deadline_passed(session) or free_debate_turn >= max_turns:
-                    break
-
-                citations = []
-                if enable_search:
-                    try:
-                        citations = await self.search.search(f"{topic} {agent.config.stance}", num_results=2)
-                    except Exception:
-                        citations = []
-
-                async for event in self._stream_debater_turn(
-                    session=session,
-                    agent=agent,
-                    topic=topic,
-                    brief=brief,
-                    turn_id=turn_id,
-                    stage=DebateStage.free_debate,
-                    intensity=intensity,
-                    citations=citations,
-                    selected_focus=selected_focus,
-                    user_context=user_context,
-                ):
-                    yield event
-
-                turn_id += 1
-                free_debate_turn += 1
-
-    async def _run_closing(
-        self,
-        session: DebateSession,
-        debater_agents: List[DebaterAgent],
-        topic: str,
-        brief: str,
-        intensity: str,
-        selected_focus: str,
-        user_context: str,
-    ) -> AsyncGenerator[SSEEvent, None]:
-        session.current_stage = DebateStage.closing
-        self.session_store.update(session)
-
-        yield self._phase_event(
-            session.session_id,
-            "closing",
-            "Closing statements",
-            "Each debater answers the strongest opposing view and clarifies their final judgment.",
-        )
-        yield self._stage_change_event(session.session_id, "closing", "Closing statements")
-
-        turn_id = len(session.messages)
-        for agent in debater_agents:
-            if session.stop_requested or self._deadline_passed(session):
-                break
-            async for event in self._stream_debater_turn(
+        # Execute summary stage separately as it requires different dependencies
+        if not session.stop_requested and not self._deadline_passed(session):
+            summary_stage = SummaryStageExecutor(self.llm, self.search, self.report_writer)
+            async for event in self._execute_stage(
+                stage_executor=summary_stage,
                 session=session,
-                agent=agent,
+                debater_agents=debater_agents,
+                turn_id=turn_id,
                 topic=topic,
                 brief=brief,
-                turn_id=turn_id,
-                stage=DebateStage.closing,
                 intensity=intensity,
                 selected_focus=selected_focus,
                 user_context=user_context,
             ):
                 yield event
-            turn_id += 1
 
-    async def _run_summary(
+    async def _execute_stage(
         self,
+        stage_executor,
         session: DebateSession,
-        topic: str,
-        brief: str,
-        host: HostAgent,
-        references: List,
-        report_writer: ReportWriter,
-    ) -> AsyncGenerator[SSEEvent, None]:
-        session.current_stage = DebateStage.summary
-        self.session_store.update(session)
-
-        yield self._phase_event(
-            session.session_id,
-            "summarizing",
-            "Summarizing",
-            "The host is synthesizing disagreements, evidence, and final judgment.",
-        )
-
-        structured_report = await host.summarize_debate_structured(topic, brief, session.messages, references)
-        session.structured_report = structured_report
-
-        for chunk in chunk_text(structured_report.synthesis, chunk_size=44):
-            yield SSEEvent(event="host_summary", data={"session_id": session.session_id, "chunk": chunk})
-            await asyncio.sleep(0.01)
-
-        report = await host.summarize_debate(topic, brief, session.messages, references)
-        report_path = report_writer.write_markdown(topic, report)
-        session.report_path = str(report_path.resolve())
-
-        yield SSEEvent(
-            event="structured_report",
-            data={"session_id": session.session_id, "report": structured_report.model_dump()},
-        )
-
-        self.session_store.update(session)
-
-    async def _stream_debater_turn(
-        self,
-        session: DebateSession,
-        agent: DebaterAgent,
-        topic: str,
-        brief: str,
+        debater_agents: List[DebaterAgent],
         turn_id: int,
-        stage: DebateStage,
+        topic: str,
+        brief: str,
         intensity: str,
-        citations: Optional[List] = None,
-        selected_focus: str = "",
-        user_context: str = "",
+        selected_focus: str,
+        user_context: str,
     ) -> AsyncGenerator[SSEEvent, None]:
-        content_parts = []
-        citations = citations or []
+        """Execute a single debate stage."""
 
-        async for token in agent.produce_turn_stream_stage(
+        # Update session stage
+        if hasattr(stage_executor, 'stage_type'):
+            stage_type = stage_executor.stage_type
+            if stage_type == "opening":
+                session.current_stage = DebateStage.opening
+            elif stage_type == "free_debate":
+                session.current_stage = DebateStage.free_debate
+            elif stage_type == "closing":
+                session.current_stage = DebateStage.closing
+            elif stage_type == "summarizing":
+                session.current_stage = DebateStage.summary
+            self.session_store.update(session)
+
+        # Yield phase and stage change events
+        yield self._phase_event(
+            session.session_id,
+            stage_executor.stage_type,
+            stage_executor.stage_name,
+            stage_executor.stage_description,
+        )
+        yield self._stage_change_event(
+            session.session_id,
+            stage_executor.stage_type,
+            stage_executor.stage_name,
+        )
+
+        # Create stage context
+        ctx = StageContext(
+            session=session,
+            debater_agents=debater_agents,
             topic=topic,
             brief=brief,
-            messages=session.messages,
-            stage=stage,
             intensity=intensity,
-            enable_search=False,
             selected_focus=selected_focus,
             user_context=user_context,
-        ):
-            content_parts.append(token)
-            yield SSEEvent(
-                event="debate_token",
-                data={
-                    "session_id": session.session_id,
-                    "speaker": agent.config.name,
-                    "turn_id": turn_id,
-                    "token": token,
-                    "stage": stage.value,
-                },
-            )
-
-        content = "".join(content_parts)
-        message = DebateMessage(
-            speaker=agent.config.name,
-            role="debater",
-            content=content,
-            turn_index=turn_id,
-            citations=citations or [],
-            stage=stage,
+            start_turn_id=turn_id,
         )
-        session.messages.append(message)
-        session.stage_transcript.setdefault(stage, []).append(message)
-        self.session_store.update(session)
 
-        yield SSEEvent(
-            event="debate_turn_end",
-            data={
-                "session_id": session.session_id,
-                "speaker": agent.config.name,
-                "turn_id": turn_id,
-                "full_content": content,
-                "citations": [citation.model_dump() for citation in citations] if citations else [],
-                "stage": stage.value,
-            },
-        )
+        # Execute the stage
+        async for event in stage_executor.execute(ctx):
+            yield event
 
     async def follow_up(
         self,
@@ -518,6 +409,7 @@ class DebateOrchestrator:
         target_role: str,
         question: str,
     ) -> AsyncGenerator[SSEEvent, None]:
+        """Post-debate follow-up Q&A with host or specific debater."""
         session = self.session_store.get(session_id)
         if not session:
             yield SSEEvent(event="error", data={"session_id": session_id, "message": "Session not found"})
@@ -565,6 +457,7 @@ class DebateOrchestrator:
         session: DebateSession,
         follow_up: FollowUpMessage,
     ) -> AsyncGenerator[SSEEvent, None]:
+        """Handle follow-up question for the host."""
         host = HostAgent(self.llm, self.search)
         response_parts = []
         async for token in host.follow_up_stream(
@@ -602,6 +495,7 @@ class DebateOrchestrator:
         agent: DebaterAgent,
         follow_up: FollowUpMessage,
     ) -> AsyncGenerator[SSEEvent, None]:
+        """Handle follow-up question for a debater."""
         response_parts = []
         async for token in agent.follow_up_stream(
             topic=session.topic,
@@ -632,6 +526,7 @@ class DebateOrchestrator:
         )
 
     async def _generate_avatar_with_event(self, debater: DebaterConfig, session_id: str) -> str | None:
+        """Generate avatar for a debater."""
         try:
             return await self.image_service.generate_debater_avatar(debater.model_dump(), session_id)
         except Exception as exc:
@@ -641,6 +536,7 @@ class DebateOrchestrator:
             return None
 
     def _build_debater_agents(self, debaters: List[DebaterConfig]) -> List[DebaterAgent]:
+        """Build DebaterAgent instances from configurations."""
         return [
             DebaterAgent(
                 config=debater,
@@ -652,27 +548,32 @@ class DebateOrchestrator:
         ]
 
     def _deadline_passed(self, session: DebateSession) -> bool:
+        """Check if the debate deadline has passed."""
         return session.deadline_at is not None and utc_now() >= session.deadline_at
 
     def _get_focus_option(self, session: DebateSession, focus_id: str) -> Optional[FocusOption]:
+        """Get a focus option by ID from the session."""
         for option in session.focus_options:
             if option.id == focus_id:
                 return option
         return None
 
     def _phase_event(self, session_id: str, phase: str, title: str, detail: str) -> SSEEvent:
+        """Create a phase event."""
         return SSEEvent(
             event="phase",
             data={"session_id": session_id, "phase": phase, "title": title, "detail": detail},
         )
 
     def _stage_change_event(self, session_id: str, stage: str, title: str) -> SSEEvent:
+        """Create a stage change event."""
         return SSEEvent(
             event="stage_change",
             data={"session_id": session_id, "stage": stage, "title": title},
         )
 
     def _error_event(self, session_id: str, stage: str, message: str) -> SSEEvent:
+        """Create an error event."""
         return SSEEvent(
             event="error",
             data={"session_id": session_id, "stage": stage, "message": message, "retrying": False},
