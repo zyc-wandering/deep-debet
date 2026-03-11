@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useDebate } from "../hooks/useDebate";
@@ -40,6 +40,18 @@ export function DebateRoomPage({ onStop }: Props) {
   const setUserContextDraft = useDebateStore((s) => s.setUserContextDraft);
 
   const [secondsLeft, setSecondsLeft] = useState(0);
+  const [hoveredDebater, setHoveredDebater] = useState<string | null>(null);
+  const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
+  const prevPhaseRef = useRef(phase);
+
+  const handleDebaterMouseEnter = (debaterId: string, e: React.MouseEvent) => {
+    setHoveredDebater(debaterId);
+    setTooltipPos({ x: e.clientX, y: e.clientY });
+  };
+
+  const handleDebaterMouseMove = (e: React.MouseEvent) => {
+    setTooltipPos({ x: e.clientX, y: e.clientY });
+  };
 
   useEffect(() => {
     const showTimer = phase === "opening" || phase === "free_debate" || phase === "closing";
@@ -70,10 +82,13 @@ export function DebateRoomPage({ onStop }: Props) {
   const canConfigure = phase === "configuring" && isConfigurationReady && Boolean(selectedFocusId);
 
   useEffect(() => {
-    if (phase === "complete" && currentTab !== "summary") {
+    // 只在 phase 从其他状态首次变为 complete 时自动切换到 summary
+    // 之后允许用户自由切换 tab
+    if (phase === "complete" && prevPhaseRef.current !== "complete") {
       setTab("summary");
     }
-  }, [phase, currentTab, setTab]);
+    prevPhaseRef.current = phase;
+  }, [phase, setTab]);
 
   const handleConfigure = async () => {
     if (!sessionId || !selectedFocusId) return;
@@ -87,8 +102,46 @@ export function DebateRoomPage({ onStop }: Props) {
     });
   };
 
+  const hoveredDebaterData = debaters.find((d) => d.id === hoveredDebater);
+
   return (
     <div className="debate-room">
+      {/* Fixed position tooltip - rendered at page level to avoid overflow clipping */}
+      {hoveredDebaterData && (
+        <div
+          className="debater-tooltip-fixed"
+          style={{
+            left: tooltipPos.x + 20,
+            top: tooltipPos.y - 50,
+          }}
+        >
+          <div className="debater-tooltip-header">
+            {hoveredDebaterData.avatar_url ? (
+              <img src={hoveredDebaterData.avatar_url} alt={hoveredDebaterData.name} className="tooltip-avatar" />
+            ) : (
+              <div className="tooltip-avatar-placeholder">{hoveredDebaterData.avatar_emoji}</div>
+            )}
+            <div className="tooltip-title">
+              <span className="tooltip-name">{hoveredDebaterData.name}</span>
+              <span className="tooltip-personality">{hoveredDebaterData.personality}</span>
+            </div>
+          </div>
+          <div className="debater-tooltip-body">
+            <div className="tooltip-row">
+              <span className="tooltip-label">背景</span>
+              <span className="tooltip-value">{hoveredDebaterData.background}</span>
+            </div>
+            <div className="tooltip-row">
+              <span className="tooltip-label">立场</span>
+              <span className="tooltip-value">{hoveredDebaterData.stance}</span>
+            </div>
+            <div className="tooltip-row">
+              <span className="tooltip-label">风格</span>
+              <span className="tooltip-value">{hoveredDebaterData.speaking_style}</span>
+            </div>
+          </div>
+        </div>
+      )}
       <header className="room-header">
         <div className="room-brand">
           <span className="room-logo">DR</span>
@@ -137,7 +190,13 @@ export function DebateRoomPage({ onStop }: Props) {
                 <p className="sidebar-empty">等待生成...</p>
               ) : (
                 debaters.map((debater) => (
-                  <div key={debater.id} className="sidebar-debater">
+                  <div
+                    key={debater.id}
+                    className="sidebar-debater"
+                    onMouseEnter={(e) => handleDebaterMouseEnter(debater.id, e)}
+                    onMouseMove={handleDebaterMouseMove}
+                    onMouseLeave={() => setHoveredDebater(null)}
+                  >
                     {debater.avatar_url ? (
                       <img src={debater.avatar_url} alt={debater.name} className="debater-thumb" />
                     ) : (
@@ -184,7 +243,9 @@ export function DebateRoomPage({ onStop }: Props) {
                   </header>
                   <div className="research-content">
                     {hostResearch ? (
-                      <div className="research-text">{hostResearch}</div>
+                      <article className="markdown-body">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{hostResearch}</ReactMarkdown>
+                      </article>
                     ) : (
                       <div className="research-loading">
                         <div className="loading-spinner" />
@@ -194,7 +255,7 @@ export function DebateRoomPage({ onStop }: Props) {
                   </div>
                 </section>
 
-                {phase === "configuring" && (
+                {phase === "configuring" ? (
                   <section className="workspace-section configuration-section">
                     <header className="section-header">
                       <h2>选择你更关心的讨论切面</h2>
@@ -257,7 +318,33 @@ export function DebateRoomPage({ onStop }: Props) {
                       </div>
                     </div>
                   </section>
-                )}
+                ) : selectedFocusId ? (
+                  <section className="workspace-section configuration-section">
+                    <header className="section-header">
+                      <h2>辩论配置</h2>
+                    </header>
+                    <div className="configuration-readonly">
+                      <div className="config-item">
+                        <span className="config-label">讨论切面</span>
+                        <span className="config-value">
+                          {focusOptions.find(o => o.id === selectedFocusId)?.name || selectedFocusId}
+                        </span>
+                      </div>
+                      <div className="config-item">
+                        <span className="config-label">交锋强度</span>
+                        <span className="config-value">
+                          {intensityDraft === "mild" ? "温和" : intensityDraft === "intense" ? "激烈" : "平衡"}
+                        </span>
+                      </div>
+                      {userContextDraft && (
+                        <div className="config-item">
+                          <span className="config-label">补充背景</span>
+                          <p className="config-text">{userContextDraft}</p>
+                        </div>
+                      )}
+                    </div>
+                  </section>
+                ) : null}
 
                 <section className="workspace-section debaters-section">
                   <header className="section-header">

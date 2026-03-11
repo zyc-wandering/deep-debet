@@ -2,7 +2,18 @@
   "permissions": {
     "allow": [
       "Bash(python:*)",
-      "Bash(npx tsc:*)"
+      "Bash(npx tsc:*)",
+      "mcp__notion__notion-search",
+      "mcp__notion__notion-fetch",
+      "mcp__notion__notion-update-page",
+      "Bash(Get-NetTCPConnection:*)",
+      "Bash(curl:*)",
+      "Bash(rm:*)",
+      "Bash(npm install:*)",
+      "Bash(npm run:*)",
+      "Bash(grep:*)",
+      "Bash(uv run:*)",
+      "Bash(Get-ChildItem:*)"
     ]
   }
 }

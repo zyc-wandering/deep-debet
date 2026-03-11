@@ -31,14 +31,27 @@ body {
   color: var(--ink);
   font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.45), rgba(255, 255, 255, 0)),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0.3)),
     linear-gradient(180deg, var(--bg), var(--bg-deep));
+  position: relative;
+}
+
+/* Background image layer with grayscale and opacity */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  background: url("/background.jpeg") center center / cover no-repeat;
+  filter: grayscale(60%) brightness(1.1);
+  opacity: 0.25;
 }
 
 body::before {
   content: "";
   position: fixed;
   inset: 0;
+  z-index: -1;
   pointer-events: none;
   background-image:
     linear-gradient(rgba(101, 71, 47, 0.035) 1px, transparent 1px),
@@ -1104,6 +1117,103 @@ select:focus {
   text-overflow: ellipsis;
 }
 
+/* Debater hover tooltip - fixed position to avoid overflow clipping */
+.debater-tooltip-fixed {
+  position: fixed;
+  width: 300px;
+  max-width: 90vw;
+  background: var(--panel-strong);
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: var(--shadow);
+  z-index: 9999;
+  backdrop-filter: blur(20px);
+  animation: tooltipFadeIn 0.15s ease;
+  pointer-events: none;
+}
+
+@keyframes tooltipFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.debater-tooltip-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.tooltip-avatar,
+.tooltip-avatar-placeholder {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid var(--line);
+  flex-shrink: 0;
+}
+
+.tooltip-avatar-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--panel);
+  font-size: 1.8rem;
+}
+
+.tooltip-title {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.tooltip-name {
+  font-weight: 700;
+  font-size: 1.1rem;
+  color: var(--ink);
+}
+
+.tooltip-personality {
+  font-size: 0.85rem;
+  color: var(--accent);
+  font-style: italic;
+}
+
+.debater-tooltip-body {
+  display: grid;
+  gap: 12px;
+}
+
+.tooltip-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.tooltip-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.tooltip-value {
+  font-size: 0.9rem;
+  color: var(--ink);
+  line-height: 1.5;
+}
+
 .sidebar-activities {
   display: grid;
   gap: 8px;
@@ -1752,4 +1862,41 @@ select:focus {
 .focus-option-card span {
   color: var(--ink-soft);
   line-height: 1.55;
+}
+
+/* Configuration readonly display */
+.configuration-readonly {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #ffffff60;
+}
+
+.config-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.config-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.config-value {
+  font-size: 1rem;
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.config-text {
+  font-size: 0.95rem;
+  color: var(--ink-soft);
+  line-height: 1.6;
+  white-space: pre-wrap;
 }
