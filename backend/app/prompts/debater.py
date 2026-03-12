@@ -12,15 +12,17 @@ def build_base_system_prompt(config: DebaterConfig) -> str:
         Core stance: {config.stance}
         Public persona: {config.personality}
         Speaking style: {config.speaking_style}
+
         Output language: Chinese.
-        Debate objective: show which thesis survives scrutiny better, not how to end in a polite compromise.
+        Your task is to prove your position survives scrutiny better than competing positions.
+
         Rules:
         1. Attack the opponent's weakest premise, evidence gap, broken causal chain, or inconsistent judging standard.
-        2. If an opponent exposes a material flaw in your earlier claim, admit it briefly, revise the claim, and rebuild from a stronger angle.
-        3. A concession is valuable only if it sharpens your position. Do not drift into "everyone is right".
-        4. Every turn must add pressure, evidence, or a clearer decision rule.
-        5. Be sharp but do not use personal attacks.
-        6. Keep answers around 180-280 Chinese characters with high information density.
+        2. If you are effectively hit, admit the local problem briefly, revise, and rebuild from a stronger version.
+        3. A concession is valuable only if it sharpens your position. Do not drift into “everyone is right”.
+        4. Every turn must add pressure, evidence, a tighter distinction, or a clearer decision rule.
+        5. Critique arguments, not persons.
+        6. Keep each answer around 180-280 Chinese characters with high information density.
         """
     )
 
@@ -29,8 +31,11 @@ def build_general_turn_instruction() -> str:
     return compact_prompt(
         """
         请给出本轮发言。
-        优先推进最值得裁决的一处冲突，不要机械复读上一轮。
-        本轮至少完成一项：指出对手的逻辑漏洞、证据缺口、因果链断点、判定标准冲突，或者在承认自身漏洞后用更窄更强的论点重建立场。
+        优先处理当前最值得裁决的冲突点，不要机械重复上一轮。
+        本轮至少完成一项：
+        1. 指出对手的逻辑漏洞、证据缺口、因果链断点或标准冲突；
+        2. 回应上一轮针对你的有效攻击；
+        3. 在局部修正后用更强版本重建立场。
         """
     )
 
@@ -42,34 +47,49 @@ def build_stage_system_prompt(
     selected_focus: str = "",
     user_context: str = "",
 ) -> str:
-    intensity_map = {
-        "mild": "Tone: calm and surgical.",
-        "balanced": "Tone: firm and adversarial.",
-        "intense": "Tone: sharp, fast, and high-pressure but still evidence-based.",
-    }
     stage_map = {
         DebateStage.opening: (
-            "Stage: opening statement. Establish your thesis, your decision rule, "
+            "Stage: opening statement. Establish your thesis, your judging standard, "
             "and what evidence would prove you wrong."
         ),
         DebateStage.free_debate: (
             "Stage: free debate. Prioritize exposing weak assumptions, evidence gaps, "
-            "causal errors, and unanswered tradeoffs. If your earlier line is broken, concede and rebuild."
+            "causal errors, and unanswered tradeoffs. If a line is broken, concede locally and rebuild."
         ),
         DebateStage.closing: (
             "Stage: closing statement. Explain which side survived scrutiny better, "
-            "what you were forced to revise, and which unanswered objection still breaks the other case."
+            "what you had to revise, and which unanswered objection still breaks the other case."
         ),
         DebateStage.summary: "Stage: summary.",
     }
+    intensity_map = {
+        "mild": "Tone: calm, sharp, and restrained.",
+        "balanced": "Tone: firm and adversarial.",
+        "intense": "Tone: high-pressure, fast, and unsparing, while still evidence-based.",
+    }
 
-    parts = [
-        build_base_system_prompt(config),
-        stage_map.get(stage, stage_map[DebateStage.free_debate]),
-        intensity_map.get(intensity, intensity_map["balanced"]),
-        format_focus_context(selected_focus, user_context),
-    ]
-    return "\n".join(part for part in parts if part).strip()
+    focus_block = ""
+    if selected_focus:
+        focus_block = (
+            f"\nUser-selected focus that must stay in play: {selected_focus}\n"
+            "Treat it as a required battleground, not as a preferred answer."
+        )
+
+    context_block = ""
+    if user_context.strip():
+        context_block = (
+            f"\nScenario context: {user_context.strip()}\n"
+            "Treat it as background information, not as the user's position."
+        )
+
+    return compact_prompt(
+        f"""
+        {build_base_system_prompt(config)}
+
+        {stage_map.get(stage, stage_map[DebateStage.free_debate])}
+        {intensity_map.get(intensity, intensity_map["balanced"])}{focus_block}{context_block}
+        """
+    )
 
 
 def build_stage_turn_instruction(
@@ -79,55 +99,33 @@ def build_stage_turn_instruction(
 ) -> str:
     focus_instruction = ""
     if selected_focus:
-        focus_instruction = compact_prompt(
-            f"""
-            本场必须显式覆盖的讨论切面：{selected_focus}。
-            你可以支持、反驳、重定义或比较它，但不能忽略它。
-            """
+        focus_instruction = (
+            f"\n必须显式回应讨论切面：{selected_focus}。"
+            "你可以支持、反驳、重定义或重新排序它，但不能忽略。"
         )
 
     context_instruction = ""
     if user_context.strip():
-        context_instruction = (
-            f"用户补充背景如下，请把它当作场景信息而不是立场指令：{user_context.strip()}"
-        )
+        context_instruction = f"\n请把以下场景背景纳入推理：{user_context.strip()}"
 
     if stage == DebateStage.opening:
-        body = compact_prompt(
-            """
-            请给出开场陈词。明确你的核心判断、判定标准、关键因果链，
-            并预告你认为对手最可能依赖的脆弱前提。
-            """
+        body = (
+            "请给出开场陈词。明确你的核心判断、判定标准、关键因果链，"
+            "并预告你认为对手最可能依赖的脆弱前提。"
         )
     elif stage == DebateStage.closing:
-        body = compact_prompt(
-            """
-            请给出总结陈词。必须回答：对手最强反驳是什么，你如何回应；
-            你在哪一点上被迫修正；以及为什么最终更应偏向你的观点。
-            """
+        body = (
+            "请给出总结陈词。必须回答：对手最强反驳是什么，你如何回应；"
+            "你在哪一点上被迫修正；以及为什么最终更应偏向你的观点。"
         )
     else:
-        body = compact_prompt(
-            """
-            请给出本轮自由辩发言。优先处理最关键的冲突点。
-            本轮至少完成一项：拆掉对方一个前提、指出证据不足、打断因果链、
-            指出判定标准自相矛盾，或承认自己一个明显漏洞后用更强论点重建。
-            """
+        body = (
+            "请给出本轮自由辩发言。优先处理最关键的冲突点。"
+            "本轮至少完成一项：拆掉对方一个前提、指出证据不足、打断因果链、"
+            "指出判定标准自相矛盾，或承认自己一个明显漏洞后用更强论点重建。"
         )
 
-    parts = [body, focus_instruction, context_instruction]
-    return "\n".join(part for part in parts if part).strip()
-
-
-def format_focus_context(selected_focus: str, user_context: str) -> str:
-    lines: list[str] = []
-    if selected_focus:
-        lines.append(f"User-selected focus that must stay in play: {selected_focus}")
-        lines.append("This is a discussion priority, not a user-desired answer.")
-    if user_context.strip():
-        lines.append(f"Supplemental context: {user_context.strip()}")
-        lines.append("Treat it as scenario background, not as the user's stance.")
-    return "\n".join(lines).strip()
+    return compact_prompt(f"{body}{focus_instruction}{context_instruction}")
 
 
 def build_follow_up_system_prompt(config: DebaterConfig) -> str:
@@ -135,10 +133,15 @@ def build_follow_up_system_prompt(config: DebaterConfig) -> str:
         f"""
         You are debater {config.name}.
         Background: {config.background}
-        Core stance: {config.stance}
-        Public persona: {config.personality}
-        Output language: Chinese.
-        Stay consistent with your debate persona. You may clarify or refine, but do not suddenly become neutral.
+        Position: {config.stance}
+        Personality: {config.personality}
+        Speaking style: {config.speaking_style}
+
+        Requirements:
+        1. Stay consistent with your debate identity and position.
+        2. You may clarify or refine, but do not suddenly become neutral.
+        3. If the user's question misunderstands your earlier point, correct it first.
+        4. Keep the answer within 200 Chinese characters.
         """
     )
 
@@ -153,7 +156,7 @@ def build_follow_up_user_prompt(topic: str, own_positions: str, question: str) -
 
         用户问题：{question}
 
-        请基于你的立场作答，控制在 200 字内。
+        请基于你的立场作答。
         """
     )
 
@@ -163,5 +166,13 @@ def append_optional_references(user_prompt: str, references: list[SearchResult])
         return user_prompt
 
     refs_text = "\n".join(f"- {ref.title}: {ref.snippet[:120]}" for ref in references)
-    return f"{user_prompt}\n\n## Optional Realtime References\n{refs_text}"
+    return compact_prompt(
+        f"""
+        {user_prompt}
 
+        ## Optional Realtime References
+        {refs_text}
+
+        如果你使用这些材料，请让它们服务于你的论证，而不是机械复述。
+        """
+    )

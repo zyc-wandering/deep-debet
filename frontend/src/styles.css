@@ -1131,7 +1131,18 @@ input::placeholder {
   position: relative;
 }
 
+.summary-tab {
+  position: relative;
+}
+
 .debate-stage-bg {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: 28px;
+}
+
+.summary-stage-bg {
   position: absolute;
   inset: 0;
   overflow: hidden;
@@ -1146,6 +1157,14 @@ input::placeholder {
   filter: saturate(0.84);
 }
 
+.summary-bg-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0.22;
+  filter: saturate(0.92);
+}
+
 .stage-overlay {
   position: absolute;
   inset: 0;
@@ -1153,7 +1172,21 @@ input::placeholder {
     linear-gradient(180deg, rgba(243, 239, 231, 0.96), rgba(243, 239, 231, 0.56) 26%, rgba(243, 239, 231, 0.96));
 }
 
+.summary-overlay {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(180deg, rgba(243, 239, 231, 0.94), rgba(243, 239, 231, 0.42) 22%, rgba(243, 239, 231, 0.96));
+}
+
 .debate-stage-content {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 16px;
+}
+
+.summary-stage-content {
   position: relative;
   z-index: 1;
   display: grid;

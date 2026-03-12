@@ -346,7 +346,7 @@ export const useDebateStore = create<DebateState>((set) => ({
       sessionId,
       reportPath,
       images: summaryImagePath
-        ? { ...s.images, summary: summaryImagePath }
+        ? { ...s.images, summary: summaryImagePath, background: summaryImagePath }
         : s.images,
       activeSpeaker: "",
       activeTurnId: null,

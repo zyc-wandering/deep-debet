@@ -20,6 +20,8 @@ const roomSteps: Array<{ key: DebatePhase; label: string }> = [
   { key: "free_debate", label: "自由辩论" },
   { key: "closing", label: "总结陈词" },
   { key: "summarizing", label: "主持人总结" },
+  { key: "generating_summary_image", label: "生成总结海报" },
+  { key: "complete", label: "报告完成" },
 ];
 
 const phaseOrder: Record<DebatePhase, number> = {
@@ -33,10 +35,10 @@ const phaseOrder: Record<DebatePhase, number> = {
   free_debate: 5,
   closing: 6,
   summarizing: 7,
-  generating_summary_image: 7,
-  complete: 8,
-  follow_up: 8,
-  error: 8,
+  generating_summary_image: 8,
+  complete: 9,
+  follow_up: 9,
+  error: 9,
 };
 
 function clampTooltip(x: number, y: number) {
@@ -134,6 +136,7 @@ export function DebateRoomPage({ onStop }: Props) {
   const hoveredDebaterData = debaters.find((d) => d.id === hoveredDebater);
   const selectedFocus = focusOptions.find((option) => option.id === selectedFocusId);
   const recentActivities = activities.slice(-6).reverse();
+  const summaryBackdrop = images.summary || images.background;
 
   const progressSteps = roomSteps.map((step) => {
     const currentOrder = phaseOrder[phase];
@@ -597,6 +600,14 @@ export function DebateRoomPage({ onStop }: Props) {
 
           {currentTab === "summary" && (
             <div className="tab-content summary-tab">
+              {summaryBackdrop && (
+                <div className="summary-stage-bg">
+                  <img src={summaryBackdrop} alt="辩论总结背景" className="summary-bg-image" />
+                  <div className="summary-overlay" />
+                </div>
+              )}
+
+              <div className="summary-stage-content">
               <section className="workspace-section summary-hero-section">
                 <div className="workspace-hero-copy">
                   <p className="eyebrow">总结报告</p>
@@ -635,6 +646,7 @@ export function DebateRoomPage({ onStop }: Props) {
                     </div>
                   )}
                 </div>
+              </div>
               </div>
             </div>
           )}

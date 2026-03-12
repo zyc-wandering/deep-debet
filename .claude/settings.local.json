@@ -13,7 +13,10 @@
       "Bash(npm run:*)",
       "Bash(grep:*)",
       "Bash(uv run:*)",
-      "Bash(Get-ChildItem:*)"
+      "Bash(Get-ChildItem:*)",
+      "Bash(dir D:\\\\projects\\\\debet_room_codex)",
+      "Bash(chcp 65001)",
+      "Bash(git checkout:*)"
     ]
   }
 }
