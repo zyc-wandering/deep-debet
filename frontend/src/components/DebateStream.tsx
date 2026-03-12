@@ -1,12 +1,18 @@
 import { useEffect, useRef, useState } from "react";
-import { DebateLine } from "../types";
+import { DebateLine, DebateStage } from "../types";
 
 interface Props {
   lines: DebateLine[];
 }
 
+const stageLabels: Record<DebateStage, string> = {
+  opening: "开场陈述",
+  free_debate: "自由辩论",
+  closing: "总结陈词",
+  summary: "总结",
+};
+
 function StreamingText({ content, isLive }: { content: string; isLive?: boolean }) {
-  // Direct display - no animation delay, content is streamed from backend
   return (
     <span className="streaming-content">
       {content}
@@ -22,20 +28,25 @@ export function DebateStream({ lines }: Props) {
     <section className="panel stream-panel">
       <div className="section-head">
         <div>
-          <p className="eyebrow">Transcript</p>
+          <p className="eyebrow">辩论记录</p>
           <h2>实时辩论记录</h2>
         </div>
         <span className="muted">{lines.length} 段发言</span>
       </div>
 
       <div ref={scrollRef} className="stream-list">
-        {lines.length === 0 && <p className="muted empty-block">辩手就位后，第一轮发言会在这里实时展开。</p>}
+        {lines.length === 0 && (
+          <p className="muted empty-block">
+            等辩手就位后，第一轮发言会在这里实时展开。
+          </p>
+        )}
 
         {lines.map((line) => (
           <article key={line.key} className={`bubble ${line.isLive ? "live" : ""}`}>
             <header>
               <div className="bubble-title">
                 <strong>{line.speaker}</strong>
+                {line.stage && <span className="stage-tag">{stageLabels[line.stage]}</span>}
                 {line.isLive && (
                   <span className="live-tag">
                     <span className="pulse" />
@@ -45,6 +56,7 @@ export function DebateStream({ lines }: Props) {
               </div>
               <span className="turn">第 {line.turnId + 1} 轮</span>
             </header>
+
             <p className="streaming-text">
               <StreamingText content={line.content} isLive={line.isLive} />
             </p>
@@ -64,7 +76,7 @@ function autoScroll(lines: DebateLine[]) {
     if (!el || !shouldAutoScroll) return;
 
     const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 100;
-    if (isNearBottom || lines.some(l => l.isLive)) {
+    if (isNearBottom || lines.some((line) => line.isLive)) {
       el.scrollTop = el.scrollHeight;
     }
   }, [lines, shouldAutoScroll]);

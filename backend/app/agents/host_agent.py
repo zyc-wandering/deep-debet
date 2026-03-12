@@ -6,17 +6,18 @@ import logging
 from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 
 from app.models import DebaterConfig, DebateMessage, FocusOption, SearchResult, StructuredReport
+from app.prompts.host import (
+    HOST_SYSTEM_PROMPT,
+    build_debater_generation_prompt,
+    build_focus_options_prompt,
+    build_follow_up_prompt,
+    build_research_prompt,
+    build_structured_summary_prompt,
+    build_summary_prompt,
+)
 from app.providers.base import LLMProvider, SearchProvider
 
 logger = logging.getLogger(__name__)
-
-
-HOST_SYSTEM_PROMPT = """You are a professional debate host and research analyst.
-You produce concise Chinese output.
-Your job is not to force a harmonious synthesis. Your job is to judge which thesis survives scrutiny better.
-Judge by evidence quality, causal clarity, responsiveness to objections, and whether other debaters were forced into concessions or retreats.
-Do not invent a compromise position unless a debater explicitly argued for that compromise and defended it successfully.
-"""
 
 
 class HostAgent:
@@ -41,12 +42,7 @@ class HostAgent:
             return self._fallback_brief(topic), []
 
         citations_text = "\n".join(f"- {r.title}: {r.snippet[:160]} ({r.url})" for r in all_results[:9])
-        user_prompt = (
-            f"话题：{topic}\n\n"
-            "请基于以下材料生成 500-800 字中文背景简报，要求中立、结构清晰、便于后续裁决。\n"
-            "必须明确：核心争点、主要不确定性、关键证据门槛、可能决定胜负的判定标准。\n\n"
-            f"材料：\n{citations_text}\n"
-        )
+        user_prompt = build_research_prompt(topic, citations_text)
         try:
             brief = await self.llm.chat(HOST_SYSTEM_PROMPT, user_prompt)
             if brief.strip():
@@ -65,30 +61,13 @@ class HostAgent:
         intensity: str = "balanced",
         user_context: str = "",
     ) -> List[DebaterConfig]:
-        focus_block = ""
-        if selected_focus:
-            focus_block = (
-                "\n本场用户更关心的讨论切面：\n"
-                f"- 名称：{selected_focus.name}\n"
-                f"- 说明：{selected_focus.description}\n"
-                "请确保至少一位辩手把它当作核心关注点，但其他辩手不能全部收缩成同一条线。"
-            )
-        context_block = f"\n用户补充背景：{user_context}\n" if user_context.strip() else ""
-
-        user_prompt = (
-            f"围绕话题《{topic}》设计 {debater_count} 位辩手。\n"
-            "只返回 JSON 数组，字段为 name, background, stance, personality, speaking_style, avatar_emoji。\n"
-            "要求：\n"
-            "1. 立场差异必须清晰，而且都像真实世界中的利益相关方、分析者或执行者。\n"
-            "2. 这些辩手不能满足于合家欢结论，必须愿意主动寻找对手的逻辑漏洞、证据缺口和因果链断点。\n"
-            "3. 至少有一位辩手擅长交叉质询和拆前提，至少有一位辩手擅长证据与机制分析。\n"
-            "4. 所有辩手都允许在自身论点被显著击穿时承认错误，但承认后必须从更窄更强的新角度继续推进。\n"
-            "5. personality 和 speaking_style 要体现思考方式，不要写成吵架型人格。\n"
-            "6. intensity 只影响交锋锐度，不改变观点方向。当前 intensity="
-            f"{intensity}。\n"
-            "7. 不要生成顺着用户想要的答案走的角色；所有角色都必须围绕议题本身展开。\n"
-            f"{focus_block}{context_block}\n"
-            f"背景简报：\n{brief[:1200]}"
+        user_prompt = build_debater_generation_prompt(
+            topic=topic,
+            debater_count=debater_count,
+            brief=brief,
+            intensity=intensity,
+            selected_focus=selected_focus,
+            user_context=user_context,
         )
 
         try:
@@ -111,28 +90,8 @@ class HostAgent:
     ) -> str:
         transcript = "\n".join(f"- {m.speaker}: {m.content}" for m in messages)
         refs = "\n".join(f"- [{r.title}]({r.url})" for r in references[:12])
+        user_prompt = build_summary_prompt(topic, brief, transcript)
 
-        user_prompt = (
-            f"话题：{topic}\n\n"
-            f"背景简报：\n{brief}\n\n"
-            f"辩论记录：\n{transcript[:7000]}\n\n"
-            "请输出中文 Markdown 报告，包含以下部分：\n"
-            "1. 背景摘要\n"
-            "2. 各方核心观点与代表性论证\n"
-            "3. 关键交锋与漏洞暴露\n"
-            "4. 让步、修正与立场变化\n"
-            "5. 综合分析\n"
-            "6. 最终裁决\n\n"
-            "最终裁决必须明确回答：哪一种观点在本场辩论后更占优，哪位辩手最有说服力，为什么。\n"
-            "最终裁决必须从本场已经出现的辩手观点中选边，不允许主持人自己发明一个折中结论充当答案。\n"
-            "裁决标准只看：证据是否更清晰、逻辑链是否更完整、是否有效回应了最强反驳、是否逼迫其他辩手让步或退缩。\n"
-            "除非记录明确显示所有关键证据都陷入僵局，否则不要写成“大家都有道理”。\n"
-            "如果只是局部成立，也要明确说明整体上最终应偏向哪一方。\n"
-            "请在“最终裁决”里固定使用三行：\n"
-            "- 胜出观点：...\n"
-            "- 最强辩手：...\n"
-            "- 胜出原因：..."
-        )
         try:
             report = await self.llm.chat(HOST_SYSTEM_PROMPT, user_prompt)
             if report.strip():
@@ -146,16 +105,7 @@ class HostAgent:
         return self._fallback_report(topic, brief, messages, references)
 
     async def extract_focus_options(self, topic: str, brief: str) -> List[FocusOption]:
-        user_prompt = (
-            f"话题：{topic}\n\n"
-            f"背景简报：\n{brief[:1500]}\n\n"
-            "请基于以上材料提取 2-3 个用户可能更关心的讨论切面。\n"
-            "每个切面都必须来自议题本身，例如成长性、执行风险、机会成本、治理复杂度。\n"
-            "不要输出“支持哪边”“反对哪边”或任何答案导向选项。\n\n"
-            "请返回 JSON 数组，每个元素包含：\n"
-            '- "name": 切面名称（10字以内）\n'
-            '- "description": 切面说明（40字以内）\n'
-        )
+        user_prompt = build_focus_options_prompt(topic, brief)
         try:
             raw = await self.llm.chat(HOST_SYSTEM_PROMPT, user_prompt)
             data = self._extract_json_array(raw)
@@ -175,22 +125,7 @@ class HostAgent:
         references: List[SearchResult],
     ) -> StructuredReport:
         transcript = "\n".join(f"- {m.speaker}: {m.content}" for m in messages)
-        user_prompt = (
-            f"话题：{topic}\n\n"
-            f"背景简报：\n{brief}\n\n"
-            f"辩论记录：\n{transcript[:7000]}\n\n"
-            "请输出 JSON 结构化报告，字段包括：\n"
-            "1. background_summary\n"
-            "2. core_arguments: 每项包含 speaker, stance, key_points\n"
-            "3. clash_points: 每项包含 topic, positions\n"
-            "4. synthesis\n"
-            "5. host_conclusion\n"
-            "6. argument_nodes: 每项包含 id, speaker, content, turn_index, targets, status, focal_point\n\n"
-            "host_conclusion 必须明确指出：当前更占优的观点是什么、最有说服力的辩手是谁、裁决依据是什么。\n"
-            "host_conclusion 必须从现有辩手观点中选边，不允许主持人自己发明新的折中路线。\n"
-            "argument_nodes 的 status 可用 claim/support/attack/concession。\n"
-            "不要把结论写成没有偏向的合家欢总结。"
-        )
+        user_prompt = build_structured_summary_prompt(topic, brief, transcript)
 
         try:
             raw = await self.llm.chat(HOST_SYSTEM_PROMPT, user_prompt)
@@ -213,18 +148,7 @@ class HostAgent:
     ) -> AsyncGenerator[str, None]:
         transcript = "\n".join(f"- {m.speaker}: {m.content}" for m in messages[-10:])
         synthesis = structured_report.synthesis if structured_report else ""
-
-        user_prompt = (
-            f"话题：{topic}\n\n"
-            f"背景简报：\n{brief[:800]}\n\n"
-            f"辩论综合：\n{synthesis[:500]}\n\n"
-            f"近期辩论记录：\n{transcript[:2000]}\n\n"
-            f"用户问题：{question}\n\n"
-            "作为主持人，请基于以上材料回答用户问题。要求：\n"
-            "1. 允许说明本场当前更占优的一方，但要说清依据。\n"
-            "2. 区分哪些结论有明确证据，哪些仍属推测。\n"
-            "3. 控制在 300 字内，信息密度高。"
-        )
+        user_prompt = build_follow_up_prompt(topic, brief, synthesis, transcript, question)
 
         full_response = ""
         try:
@@ -342,7 +266,7 @@ class HostAgent:
                 name="交叉质询派 Xu",
                 background="独立评论者，专门拆解论证漏洞",
                 stance=f"对《{topic}》持高压质疑立场",
-                personality="不怕承认局部错误，但会迅速换更强论点继续追击",
+                personality="不怕承认局部错误，但会迅速换到更强论点继续追击",
                 speaking_style="cross_exam",
                 avatar_emoji="X",
             ),
@@ -437,10 +361,7 @@ class HostAgent:
 
     def _fallback_follow_up(self, question: str, messages: List[DebateMessage]) -> str:
         winner, rationale = self._pick_winner(messages)
-        return (
-            f"关于你的问题“{question[:30]}...”，基于现有交锋，当前更占优的一方是 {winner}。"
-            f"{rationale}"
-        )
+        return f"关于你的问题“{question[:30]}...”，基于现有交锋，当前更占优的一方是 {winner}。{rationale}"
 
     def _pick_winner(self, messages: List[DebateMessage]) -> Tuple[str, str]:
         if not messages:
@@ -483,8 +404,6 @@ class HostAgent:
             f"- 最强辩手：{winner}\n"
             f"- 胜出原因：{rationale}"
         )
-        if "## 最终裁决" in report:
-            return f"{report}\n\n{verdict_block}"
         return f"{report}\n\n{verdict_block}"
 
     def _ensure_directional_conclusion(self, conclusion: str, messages: List[DebateMessage]) -> str:

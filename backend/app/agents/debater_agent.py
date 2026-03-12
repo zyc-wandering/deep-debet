@@ -3,10 +3,19 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-from typing import AsyncGenerator, List, Optional, Tuple
+from typing import AsyncGenerator, List, Tuple
 
 from app.agents.context_manager import ContextManager
 from app.models import DebaterConfig, DebateMessage, DebateStage, SearchResult
+from app.prompts.debater import (
+    append_optional_references,
+    build_base_system_prompt,
+    build_follow_up_system_prompt,
+    build_follow_up_user_prompt,
+    build_general_turn_instruction,
+    build_stage_system_prompt,
+    build_stage_turn_instruction,
+)
 from app.providers.base import LLMProvider, SearchProvider
 
 logger = logging.getLogger(__name__)
@@ -27,22 +36,7 @@ class DebaterAgent:
         self.rolling_summary = ""
 
     def _system_prompt(self) -> str:
-        return (
-            f"You are debater {self.config.name}.\n"
-            f"Background: {self.config.background}\n"
-            f"Core stance: {self.config.stance}\n"
-            f"Public persona: {self.config.personality}\n"
-            f"Speaking style: {self.config.speaking_style}\n"
-            "Output language: Chinese.\n"
-            "Debate objective: show which thesis survives scrutiny better, not how to end in a polite compromise.\n"
-            "Rules:\n"
-            "1. Attack the opponent's weakest premise, evidence gap, broken causal chain, or inconsistent judging standard.\n"
-            "2. If an opponent exposes a material flaw in your earlier claim, admit it briefly, revise the claim, and rebuild from a stronger angle.\n"
-            "3. A concession is valuable only if it sharpens your position. Do not drift into 'everyone is right'.\n"
-            "4. Every turn must add pressure, evidence, or a clearer decision rule.\n"
-            "5. Be sharp but do not use personal attacks.\n"
-            "6. Keep answers around 180-280 Chinese characters with high information density."
-        )
+        return build_base_system_prompt(self.config)
 
     async def produce_turn(
         self,
@@ -67,11 +61,7 @@ class DebaterAgent:
             messages=messages,
             turn_instruction=self._general_turn_instruction(),
         )
-
-        refs_text = "\n".join(f"- {r.title}: {r.snippet[:120]}" for r in references)
-        user_prompt = ctx.to_prompt()
-        if refs_text:
-            user_prompt = f"{user_prompt}\n\n## Optional Realtime References\n{refs_text}"
+        user_prompt = append_optional_references(ctx.to_prompt(), references)
 
         try:
             text = await self.llm.chat(self._system_prompt(), user_prompt)
@@ -105,11 +95,7 @@ class DebaterAgent:
             messages=messages,
             turn_instruction=self._general_turn_instruction(),
         )
-
-        refs_text = "\n".join(f"- {r.title}: {r.snippet[:120]}" for r in references)
-        user_prompt = ctx.to_prompt()
-        if refs_text:
-            user_prompt = f"{user_prompt}\n\n## Optional Realtime References\n{refs_text}"
+        user_prompt = append_optional_references(ctx.to_prompt(), references)
 
         try:
             async for token in self.llm.chat_stream(self._system_prompt(), user_prompt):
@@ -149,11 +135,7 @@ class DebaterAgent:
             messages=messages,
             turn_instruction=self._get_stage_instruction(stage, selected_focus, user_context),
         )
-
-        refs_text = "\n".join(f"- {r.title}: {r.snippet[:120]}" for r in references)
-        user_prompt = ctx.to_prompt()
-        if refs_text:
-            user_prompt = f"{user_prompt}\n\n## Optional Realtime References\n{refs_text}"
+        user_prompt = append_optional_references(ctx.to_prompt(), references)
 
         try:
             async for token in self.llm.chat_stream(system_prompt, user_prompt):
@@ -166,12 +148,7 @@ class DebaterAgent:
                 await asyncio.sleep(0.01)
 
     def _general_turn_instruction(self) -> str:
-        return (
-            "请给出本轮发言。\n"
-            "优先推进最值得裁决的一处冲突，不要机械复读上一轮。\n"
-            "本轮至少完成一项：指出对手的逻辑漏洞、证据缺口、因果链断点、判定标准冲突，"
-            "或者在承认自身漏洞后用更窄更强的论点重建立场。"
-        )
+        return build_general_turn_instruction()
 
     def _system_prompt_stage(
         self,
@@ -180,33 +157,13 @@ class DebaterAgent:
         selected_focus: str = "",
         user_context: str = "",
     ) -> str:
-        intensity_map = {
-            "mild": "Tone: calm and surgical.",
-            "balanced": "Tone: firm and adversarial.",
-            "intense": "Tone: sharp, fast, and high-pressure but still evidence-based.",
-        }
-        stage_map = {
-            DebateStage.opening: (
-                "Stage: opening statement. Establish your thesis, your decision rule, "
-                "and what evidence would prove you wrong."
-            ),
-            DebateStage.free_debate: (
-                "Stage: free debate. Prioritize exposing weak assumptions, evidence gaps, "
-                "causal errors, and unanswered tradeoffs. If your earlier line is broken, concede and rebuild."
-            ),
-            DebateStage.closing: (
-                "Stage: closing statement. Explain which side survived scrutiny better, "
-                "what you were forced to revise, and which unanswered objection still breaks the other case."
-            ),
-            DebateStage.summary: "Stage: summary.",
-        }
-        focus_context = self._format_focus_context(selected_focus, user_context)
-        return (
-            f"{self._system_prompt()}\n"
-            f"{stage_map.get(stage, stage_map[DebateStage.free_debate])}\n"
-            f"{intensity_map.get(intensity, intensity_map['balanced'])}\n"
-            f"{focus_context}"
-        ).strip()
+        return build_stage_system_prompt(
+            config=self.config,
+            stage=stage,
+            intensity=intensity,
+            selected_focus=selected_focus,
+            user_context=user_context,
+        )
 
     def _get_stage_instruction(
         self,
@@ -214,46 +171,11 @@ class DebaterAgent:
         selected_focus: str = "",
         user_context: str = "",
     ) -> str:
-        focus_instruction = ""
-        if selected_focus:
-            focus_instruction = (
-                f"\n本场必须显式覆盖的讨论切面：{selected_focus}。"
-                "你可以支持、反驳、重定义或比较它，但不能忽略它。"
-            )
-        context_instruction = ""
-        if user_context.strip():
-            context_instruction = (
-                f"\n用户补充背景如下，请把它当作场景信息而不是立场指令：{user_context.strip()}"
-            )
-
-        if stage == DebateStage.opening:
-            return (
-                "请给出开场陈词。明确你的核心判断、判定标准、关键因果链，"
-                "并预告你认为对手最可能依赖的脆弱前提。"
-                f"{focus_instruction}{context_instruction}"
-            )
-        if stage == DebateStage.closing:
-            return (
-                "请给出总结陈词。必须回答：对手最强反驳是什么，你如何回应；"
-                "你在哪一点上被迫修正；以及为什么最终更应偏向你的观点。"
-                f"{focus_instruction}{context_instruction}"
-            )
-        return (
-            "请给出本轮自由辩发言。优先处理最关键的冲突点。"
-            "本轮至少完成一项：拆掉对方一个前提、指出证据不足、打断因果链、"
-            "指出判定标准自相矛盾，或承认自己一个明显漏洞后用更强论点重建。"
-            f"{focus_instruction}{context_instruction}"
+        return build_stage_turn_instruction(
+            stage=stage,
+            selected_focus=selected_focus,
+            user_context=user_context,
         )
-
-    def _format_focus_context(self, selected_focus: str, user_context: str) -> str:
-        lines: List[str] = []
-        if selected_focus:
-            lines.append(f"User-selected focus that must stay in play: {selected_focus}")
-            lines.append("This is a discussion priority, not a user-desired answer.")
-        if user_context.strip():
-            lines.append(f"Supplemental context: {user_context.strip()}")
-            lines.append("Treat it as scenario background, not as the user's stance.")
-        return "\n".join(lines).strip()
 
     async def follow_up_stream(
         self,
@@ -265,20 +187,8 @@ class DebaterAgent:
         own_messages = [m for m in messages if m.speaker == self.config.name]
         own_positions = "\n".join(f"- {m.content[:150]}..." for m in own_messages[-3:])
 
-        system_prompt = (
-            f"You are debater {self.config.name}.\n"
-            f"Background: {self.config.background}\n"
-            f"Core stance: {self.config.stance}\n"
-            f"Public persona: {self.config.personality}\n"
-            "Output language: Chinese.\n"
-            "Stay consistent with your debate persona. You may clarify or refine, but do not suddenly become neutral."
-        )
-        user_prompt = (
-            f"话题：{topic}\n\n"
-            f"你在辩论中的主要观点：\n{own_positions}\n\n"
-            f"用户问题：{question}\n\n"
-            "请基于你的立场作答，控制在 200 字内。"
-        )
+        system_prompt = build_follow_up_system_prompt(self.config)
+        user_prompt = build_follow_up_user_prompt(topic, own_positions, question)
 
         full_response = ""
         try:
@@ -323,7 +233,7 @@ class DebaterAgent:
                 "核心判断仍成立：没有更清晰的验证标准前，对方方案站不稳。"
             )
         return (
-            f"我最后仍然偏向{self.config.stance}。如果对方无法回答失败成本、纠错机制和证据门槛，"
+            f"我最后仍然偏向 {self.config.stance}。如果对方无法回答失败成本、纠错机制和证据门槛，"
             "那它的观点就还没有达到可决策的强度。"
         )
 
@@ -353,7 +263,7 @@ class DebaterAgent:
 
     def _style_lead(self) -> str:
         style_map = {
-            "high_signal": "先把最硬的一点压实：",
+            "high_signal": "先把最硬的一点压出来：",
             "structured": "先把争点拆开，不然讨论会继续打转：",
             "blunt": "别绕圈子，先看成本和止损：",
             "narrative": "真正危险的不是表面分歧，而是被忽略的后果链条：",

@@ -5,6 +5,7 @@ from textwrap import shorten
 from typing import List
 
 from app.models import DebateMessage
+from app.prompts.context import render_context_window, render_rolling_summary
 
 
 @dataclass
@@ -18,46 +19,14 @@ class ContextWindow:
     turn_instruction: str
 
     def to_prompt(self) -> str:
-        lines = [
-            "## Topic Brief",
-            self.brief,
-            "",
-            "## Rolling Summary",
-            self.rolling_summary or "No summary yet.",
-            "",
-            "## Latest Message From Each Other Debater",
-        ]
-        if not self.latest_other_messages:
-            lines.append("No other debaters have spoken yet.")
-        else:
-            for msg in self.latest_other_messages:
-                lines.append(f"- {msg.speaker}: {msg.content}")
-
-        lines.extend(
-            [
-                "",
-                "## Your Own Recent Claims",
-            ]
+        return render_context_window(
+            brief=self.brief,
+            rolling_summary=self.rolling_summary,
+            latest_other_messages=self.latest_other_messages,
+            own_recent_messages=self.own_recent_messages,
+            recent_messages=self.recent_messages,
+            turn_instruction=self.turn_instruction,
         )
-        if not self.own_recent_messages:
-            lines.append("You have not spoken yet.")
-        else:
-            for msg in self.own_recent_messages:
-                lines.append(f"- Round {msg.turn_index + 1}: {msg.content}")
-
-        lines.extend(
-            [
-                "",
-            "## Recent Messages",
-            ]
-        )
-        if not self.recent_messages:
-            lines.append("No messages yet.")
-        else:
-            for msg in self.recent_messages:
-                lines.append(f"- Round {msg.turn_index + 1} | {msg.speaker}: {msg.content}")
-        lines.extend(["", "## Turn Instruction", self.turn_instruction])
-        return "\n".join(lines)
 
 
 class ContextManager:
@@ -96,13 +65,13 @@ class ContextManager:
         for msg in old:
             by_speaker.setdefault(msg.speaker, []).append(msg)
 
-        lines = ["Earlier rounds condensed by speaker:"]
+        entries_by_speaker: dict[str, list[tuple[int, str]]] = {}
         for speaker, speaker_messages in by_speaker.items():
-            lines.append(f"- {speaker}:")
+            entries_by_speaker[speaker] = []
             for msg in speaker_messages[-2:]:
                 excerpt = shorten(msg.content.replace("\n", " "), width=120, placeholder="...")
-                lines.append(f"  Round {msg.turn_index + 1}: {excerpt}")
-        return "\n".join(lines)
+                entries_by_speaker[speaker].append((msg.turn_index, excerpt))
+        return render_rolling_summary(entries_by_speaker)
 
     def _latest_message_per_other_speaker(
         self,
