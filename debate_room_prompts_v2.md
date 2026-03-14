@@ -380,15 +380,20 @@ intensity={intensity} 直接影响认知攻击性：
 3. 辩手差异来自：激励结构、分析框架、机构位置、风险偏好、时间尺度
 4. 允许局部修正后重建，但禁止滑向"大家都对"
 5. 不要顺着用户可能期待的答案造角色
+6. 必须明确写出每位辩手的年龄、人种/族裔与人格特征，这些信息要和其身份背景、议题语境一致
+7. 辩手姓名不需要固定为中文姓名；应根据辩题涉及的地区、文化、制度背景灵活选择合适姓名，允许任何人种、民族和命名风格
 
 【设计质量自检】
 每位辩手设计完成后，检查：
 - 他/她的背景能解释为什么持有这个立场吗？（能→合格）
 - 他/她与其他辩手的冲突是真实分歧，还是措辞差异？（真实分歧→合格）
 - 他/她的认知框架会在辩论中产生独特的攻击角度吗？（会→合格）
+- 年龄、人种/族裔、姓名是否与议题场景和人物背景自然匹配，而不是默认套用单一国家或单一职业模板？（是→合格）
 
 【JSON输出字段】（每个元素必须包含）
-- name: 辩手姓名（可以是真实职业背景风格的姓名）
+- name: 辩手姓名（按辩题背景灵活命名，不默认中国姓名）
+- age: 年龄描述（如“29岁”“五十岁出头”）
+- ethnicity: 人种/族裔或文化来源描述（需自然、具体、不过度刻板）
 - background: 背景故事（50字内，解释其身份和利益立场）
 - stance: 核心立场（30字内，明确、不模糊）
 - personality: 人格特质（包含认知框架类型）
@@ -447,15 +452,20 @@ intensity={intensity} directly modulates cognitive aggressiveness:
 3. Debater differences stem from: incentive structures, analytical frameworks, institutional positions, risk preferences, time horizons
 4. Local concessions followed by rebuilding are allowed; drifting into "everyone is right" is prohibited
 5. Do not create characters that simply confirm the user's expected answer
+6. You must explicitly specify each debater's age, ethnicity/racial background, and personality traits in a way that matches their identity and the topic context
+7. Names do not need to be Chinese names; choose names flexibly based on the topic's geography, culture, and institutional context, allowing any ethnicity, nationality, or naming style when appropriate
 
 [DESIGN QUALITY SELF-CHECK]
 After designing each debater, verify:
 - Does their background explain why they hold this position? (Yes → pass)
 - Is the conflict with other debaters a genuine substantive disagreement, or just a difference in wording? (Genuine → pass)
 - Will their cognitive framework produce a unique attack angle in the debate? (Yes → pass)
+- Do age, ethnicity/racial background, and name fit the topic context naturally rather than defaulting to one country, one ethnicity, or one professional stereotype? (Yes → pass)
 
 [JSON OUTPUT FIELDS] (each element must include)
-- name: debater's name (may use professionally-styled names)
+- name: debater's name (chosen to fit the topic context; do not default to Chinese names)
+- age: age description (e.g. "29 years old", "early fifties")
+- ethnicity: ethnicity/racial or cultural background description (natural, specific, non-stereotyped)
 - background: background story (max 50 chars in Chinese, explains identity and stake)
 - stance: core position (max 30 chars in Chinese, clear and unambiguous)
 - personality: personality traits (includes cognitive framework type)
@@ -502,13 +512,15 @@ After designing each debater, verify:
 - 哪位辩手做出了实质性让步？（不是客套话，是真正修正了观点）
 - 哪位辩手最顽固地坚守了原始立场？
 
-步骤3：评估证据质量
-- 哪方提供了最具体、最可验证的证据？
-- 哪方的关键论点缺乏实质证据支撑？
+步骤3：评估论证质量（优先逻辑而非证据数量）
+- 哪方的论证链条更完整、逻辑更自洽？
+- 哪方更有效地识别和回应了对方的前提假设问题？
+- 哪方在证据不足时，能够依靠逻辑力量支撑论点？
+- 哪方提出的价值判断和问题重构更具洞察力？
 
 步骤4：形成裁决
-- 基于上述分析，哪方论证在证据压力下存活得更好？
-- 裁决依据是什么？（必须具体，不能说"总体上"）
+- 基于上述分析，哪方论证在逻辑压力下存活得更好？
+- 裁决依据是什么？（必须具体，给出2-3个独立的原因，不能说"总体上"）
 
 ---
 
@@ -546,7 +558,11 @@ After designing each debater, verify:
 
 - **胜出观点**：[明确陈述，不允许"双方都有道理"]
 - **最强辩手**：[姓名]
-- **胜出原因**：[具体说明，基于哪些证据/论点/表现，2-3句话]
+- **胜出原因**：必须给出2-3个独立的、不同维度的原因，例如：
+  1. **逻辑维度**：[某方的推理链条更完整、逻辑更自洽的具体说明]
+  2. **价值维度**：[某方对问题价值的判断更具洞察力的具体说明]
+  3. **回应维度**：[某方更有效地识别和回应对方攻击的具体说明]
+  （如果某些维度不明显，可以合并或调整，但必须至少有2个独立原因）
 
 裁决说明：[如果存在重要不确定性，说明是在什么前提下得出此裁决]
 
@@ -583,13 +599,15 @@ Step 2: Track position changes
 - Which debater made a substantive concession? (Not pleasantries — actually revised their view)
 - Which debater most stubbornly maintained their original position?
 
-Step 3: Evaluate evidence quality
-- Which side provided the most specific, verifiable evidence?
-- Which side's key arguments lacked substantive evidentiary support?
+Step 3: Evaluate argument quality (prioritize logic over evidence quantity)
+- Which side's argument chain is more complete and logically coherent?
+- Which side more effectively identified and responded to the opponent's premise issues?
+- Which side could rely on logical force when evidence was insufficient?
+- Which side's value judgments and problem reframing were more insightful?
 
 Step 4: Form the verdict
-- Based on the above analysis, whose argument survived evidentiary pressure better?
-- What is the basis for the verdict? (Must be specific — cannot say "overall")
+- Based on the above analysis, whose argument survived logical pressure better?
+- What is the basis for the verdict? (Must be specific, provide 2-3 independent reasons — cannot say "overall")
 
 ---
 
@@ -627,7 +645,11 @@ Step 4: Form the verdict
 
 - **Winning Argument**: [clear statement — "both have merit" not allowed]
 - **Strongest Debater**: [name]
-- **Reason for Victory**: [specific explanation — based on which evidence/arguments/performance, 2-3 sentences]
+- **Reasons for Victory**: Must provide 2-3 independent reasons from different dimensions, for example:
+  1. **Logic Dimension**: [specific explanation of whose reasoning chain was more complete and logically coherent]
+  2. **Value Dimension**: [specific explanation of whose judgment about the problem's value was more insightful]
+  3. **Response Dimension**: [specific explanation of who more effectively identified and responded to opponent attacks]
+  (If some dimensions are not prominent, you may combine or adjust, but must provide at least 2 independent reasons)
 
 Verdict Note: [if significant uncertainty exists, state under what conditions this verdict was reached]
 
@@ -684,14 +706,15 @@ Bad report: All sides' views are listed but no judgment is made; or the verdict 
   - "topic": 交锋点名称（10字以内）
   - "positions": 对象，key为辩手姓名，value为该辩手在此交锋点的立场摘要
 
-"synthesis": 字符串，综合分析，150字以内，从证据质量和逻辑完整度两个维度评估。
+"synthesis": 字符串，综合分析，150字以内，优先从逻辑完整度、论证链条自洽性、问题价值洞察三个维度评估，其次才考虑证据支持。
 
-"host_conclusion": 对象，必须包含三个子字段：
+"host_conclusion": 对象，必须包含四个子字段：
   - "winning_argument": 字符串，胜出观点（不允许中立，必须明确选边）
   - "strongest_debater": 字符串，最强辩手姓名
-  - "reasoning": 字符串，裁决依据，100字以内，必须引用具体的论点或证据
-  不允许的填法：{"winning_argument": "双方各有优劣"}
-  必须的填法：{"winning_argument": "反对碳税方论证更优，因为其量化数据具体且经过交叉验证"}
+  - "reasoning": 字符串，裁决依据简要概述，50字以内
+  - "reasoning_list": 字符串数组，2-3个独立的胜出原因，每个原因从不同维度说明（如逻辑完整性、价值洞察、回应能力等），每项50字以内
+  不允许的填法：{"winning_argument": "双方各有优劣", "reasoning_list": ["总体上更好"]}
+  必须的填法：{"winning_argument": "反对碳税方论证更优", "reasoning_list": ["逻辑链条更完整，从前提A到结论B的推导无跳跃", "对问题价值的判断更具洞察力，指出了被忽视的社会公平维度", "有效识别并回应了对方的核心前提假设问题"]}
 
 "argument_nodes": 数组，记录关键论证节点，每项包含：
   - "id": 唯一标识符（字符串，如 "A1", "B2"）
@@ -731,14 +754,15 @@ Field specifications:
   - "topic": clash point name (max 10 Chinese characters)
   - "positions": object, key = debater name, value = that debater's position summary on this clash point
 
-"synthesis": string, synthesis analysis, max 150 Chinese characters, evaluating from evidence quality and logical completeness dimensions.
+"synthesis": string, synthesis analysis, max 150 Chinese characters, prioritizing logical completeness, argument chain coherence, and insight into problem value; evidence support is secondary.
 
-"host_conclusion": object, must contain three sub-fields:
+"host_conclusion": object, must contain four sub-fields:
   - "winning_argument": string, the winning argument (neutrality not allowed — must take a side)
   - "strongest_debater": string, name of the strongest debater
-  - "reasoning": string, verdict basis, max 100 Chinese characters, must reference specific arguments or evidence
-  Prohibited: {"winning_argument": "Both sides have their merits"}
-  Required: {"winning_argument": "The anti-carbon-tax position was stronger because its quantitative data was specific and cross-verified"}
+  - "reasoning": string, brief summary of verdict basis, max 50 Chinese characters
+  - "reasoning_list": string array, 2-3 independent reasons for victory, each from a different dimension (e.g., logical completeness, value insight, responsiveness), each max 50 Chinese characters
+  Prohibited: {"winning_argument": "Both sides have their merits", "reasoning_list": ["better overall"]}
+  Required: {"winning_argument": "The anti-carbon-tax position was stronger", "reasoning_list": ["More complete logical chain with no leaps from premise A to conclusion B", "More insightful judgment on problem value, identifying overlooked social equity dimension", "Effectively identified and responded to opponent's core premise issues"]}
 
 "argument_nodes": array, recording key argument nodes, each item contains:
   - "id": unique identifier (string, e.g., "A1", "B2")
@@ -853,7 +877,7 @@ Response requirements:
 - 明确"有效让步"的定义（让步必须锐化立场，不能松动立场）
 - 字数限制从240-320调整为180-280（更高信息密度）
 
-**模板变量 / Template Variables**: `{config.name}`, `{config.background}`, `{config.stance}`, `{config.personality}`, `{config.speaking_style}`
+**模板变量 / Template Variables**: `{config.name}`, `{config.age}`, `{config.ethnicity}`, `{config.background}`, `{config.stance}`, `{config.personality}`, `{config.speaking_style}`
 
 ---
 
@@ -861,6 +885,12 @@ Response requirements:
 
 ```
 你是辩手 {config.name}。
+
+【年龄】
+{config.age}
+
+【人种/族裔】
+{config.ethnicity}
 
 【身份背景】
 {config.background}
@@ -907,6 +937,12 @@ Response requirements:
 
 ```
 You are debater {config.name}.
+
+[AGE]
+{config.age}
+
+[ETHNICITY / RACIAL OR CULTURAL BACKGROUND]
+{config.ethnicity}
 
 [IDENTITY AND BACKGROUND]
 {config.background}
@@ -1120,11 +1156,16 @@ Can help you understand the specific context of this debate.
 在开始写发言前，先快速回顾：前几轮中，对手做了哪些让步？你做了哪些让步？目前最关键的未解决冲突点是什么？
 
 【本轮任务——至少完成以下其中一项】
-选项A（主动攻击）：拆掉对手一个关键前提——明确指出这个前提假设、解释为什么它不成立、引用证据或反例。
-选项B（证据质疑）：指出对手的某个重要论点缺乏足够证据支撑，或者证据不够具体可验证。
-选项C（因果链攻击）：指出对手论证中从A到B的跳跃——A到B的机制是什么？这个机制真的成立吗？
-选项D（标准矛盾）：指出对手在不同轮次中使用了自相矛盾的判定标准。
-选项E（防守重建）：如果上一轮你有明显被打中的点，先承认那个具体失败，然后修正并用更强版本重建。
+选项A（逻辑前提攻击）：拆掉对手一个关键前提——明确指出这个前提假设、解释其逻辑漏洞或隐含假设为何站不住脚，可用思想实验或反例说明。
+选项B（因果链路质疑）：指出对手论证中从A到B的跳跃——A到B的机制是什么？中间缺失了哪些环节？这个推理链条在逻辑上是否自洽？
+选项C（问题价值重构）：重新审视讨论这个问题的意义——为什么这个议题重要？当前讨论是否忽略了更深层的价值冲突或更根本的问题？
+选项D（标准矛盾）：指出对手在不同轮次中使用了自相矛盾的判定标准，或其对"更好"的定义存在内在不一致。
+选项E（防守重建）：如果上一轮你有明显被打中的点，先承认那个具体失败，然后基于更合理的逻辑前提或更完整的论证链条进行修正重建。
+
+【论证原则】
+- 优先关注逻辑自洽性、概念澄清、价值权衡——而非简单引用外部数据
+- 如果证据不足或不可量化，专注于论证的内在逻辑力量而非强行引用不可靠的数据
+- 好的论证不依赖"我有更多数据"，而依赖"我的推理链条更完整、前提更可靠"
 
 【交叉质询选项】
 如果你选择主动攻击，可以以提问的形式（而非直接反驳）来暴露对手的前提漏洞：
@@ -1134,7 +1175,7 @@ Can help you understand the specific context of this debate.
 [场景指令]
 
 【本轮成功标准】
-读完你的发言，裁判应该看到：对手的某个具体论点被有效质疑或削弱，且你的立场整体上比上轮更强。
+读完你的发言，裁判应该看到：对手的某个具体论点被有效质疑或削弱（无论是逻辑漏洞、价值盲区还是概念混淆），且你的立场整体上比上轮更强。
 ```
 
 **总结陈词指令 (closing)**
@@ -1194,11 +1235,16 @@ Please deliver your free debate turn.
 Before writing your turn, briefly review: what concessions did the opponent make in previous rounds? What concessions did you make? What is the most critical unresolved clash point right now?
 
 [THIS TURN'S TASK — complete at least one of the following]
-Option A (Active Attack): Dismantle one key premise of the opponent — explicitly identify the premise assumption, explain why it doesn't hold, cite evidence or counterexamples.
-Option B (Evidence Challenge): Point out that one of the opponent's important arguments lacks sufficient evidentiary support, or that the evidence is not specific enough to be verifiable.
-Option C (Causal Chain Attack): Identify the leap in the opponent's argument from A to B — what is the mechanism from A to B? Does this mechanism actually hold?
-Option D (Standard Contradiction): Point out that the opponent has used self-contradictory decision criteria across different rounds.
-Option E (Defense-Rebuild): If you had a clearly landed hit against you in the previous round, first acknowledge that specific failure, then revise and rebuild from a stronger version.
+Option A (Logical Premise Attack): Dismantle one key premise of the opponent — explicitly identify the premise assumption, explain its logical flaw or why its implicit assumptions don't hold, using thought experiments or counterexamples.
+Option B (Causal Chain Challenge): Identify the leap in the opponent's argument from A to B — what is the mechanism from A to B? What intermediate steps are missing? Is this reasoning chain logically coherent?
+Option C (Problem Value Reframing): Re-examine the significance of discussing this issue — why does this topic matter? Has the current discussion overlooked deeper value conflicts or more fundamental questions?
+Option D (Standard Contradiction): Point out that the opponent has used self-contradictory decision criteria across different rounds, or that their definition of "better" contains internal inconsistencies.
+Option E (Defense-Rebuild): If you had a clearly landed hit against you in the previous round, first acknowledge that specific failure, then revise and rebuild based on more reasonable logical premises or a more complete argument chain.
+
+[ARGUMENTATION PRINCIPLES]
+- Prioritize logical coherence, conceptual clarification, and value trade-offs — rather than simply citing external data
+- If evidence is insufficient or not quantifiable, focus on the intrinsic logical force of the argument rather than forcibly citing unreliable data
+- A good argument doesn't rely on "I have more data" but on "my reasoning chain is more complete and my premises more reliable"
 
 [CROSS-EXAMINATION OPTION]
 If you choose active attack, you may expose the opponent's premise gap through a question (rather than direct rebuttal):
@@ -1208,7 +1254,7 @@ Example: "You claim X, but if situation Y holds true, does your argument still s
 [CONTEXT INSTRUCTION]
 
 [SUCCESS STANDARD FOR THIS TURN]
-After reading your turn, the judge should see: one of the opponent's specific arguments has been effectively challenged or weakened, and your position is overall stronger than last round.
+After reading your turn, the judge should see: one of the opponent's specific arguments has been effectively challenged or weakened (whether through logical flaws, value blind spots, or conceptual confusion), and your position is overall stronger than last round.
 ```
 
 **Closing Statement Instruction (closing)**
@@ -1311,7 +1357,7 @@ Bad turn: Restates all positions again without adding any new offensive or defen
 - 加入误解纠正机制
 - 保持认知框架的体现（不只是立场，还有思考方式）
 
-**模板变量 / Template Variables**: `{config.name}`, `{config.background}`, `{config.stance}`, `{config.personality}`, `{config.speaking_style}`
+**模板变量 / Template Variables**: `{config.name}`, `{config.age}`, `{config.ethnicity}`, `{config.background}`, `{config.stance}`, `{config.personality}`, `{config.speaking_style}`
 
 ---
 
@@ -1319,6 +1365,8 @@ Bad turn: Restates all positions again without adding any new offensive or defen
 
 ```
 你是辩手 {config.name}。
+年龄：{config.age}
+人种/族裔：{config.ethnicity}
 背景：{config.background}
 立场：{config.stance}
 人格特质：{config.personality}
@@ -1357,6 +1405,8 @@ Bad turn: Restates all positions again without adding any new offensive or defen
 
 ```
 You are debater {config.name}.
+Age: {config.age}
+Ethnicity / racial or cultural background: {config.ethnicity}
 Background: {config.background}
 Position: {config.stance}
 Personality: {config.personality}

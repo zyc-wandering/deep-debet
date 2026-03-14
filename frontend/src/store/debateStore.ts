@@ -11,7 +11,6 @@ import {
   FocusOption,
   PreparingTurn,
   StructuredReport,
-  TraceEntry,
   WorkflowActivity,
 } from "../types";
 
@@ -35,12 +34,10 @@ interface DebateState {
   lines: DebateLine[];
   liveBuffers: Record<string, { content: string; stage?: DebateStage }>;
   reportPath: string;
-  traceJournalPath: string;
   reportMarkdown: string;
   structuredReport: StructuredReport | null;
   errorMessage: string;
   activities: WorkflowActivity[];
-  traceEntries: TraceEntry[];
   activeSpeaker: string;
   activeTurnId: number | null;
   preparingTurn: PreparingTurn | null;
@@ -91,8 +88,6 @@ interface DebateState {
   setDone(sessionId: string, reportPath: string, summaryImagePath?: string): void;
   setReportMarkdown(text: string): void;
   setStructuredReport(report: StructuredReport): void;
-  addTraceEntry(entry: TraceEntry): void;
-  setTraceJournalPath(path: string): void;
   setError(msg: string): void;
   reset(): void;
 
@@ -130,14 +125,6 @@ const pushActivity = (
   return [...current.slice(-11), nextItem];
 };
 
-const pushTraceEntry = (current: TraceEntry[], entry: TraceEntry): TraceEntry[] => {
-  const last = current[current.length - 1];
-  if (last && last.id === entry.id) {
-    return current;
-  }
-  return [...current.slice(-199), entry];
-};
-
 const initialState = {
   currentTab: "config" as DebateRoomTab,
 
@@ -155,12 +142,10 @@ const initialState = {
   lines: [] as DebateLine[],
   liveBuffers: {} as Record<string, { content: string; stage?: DebateStage }>,
   reportPath: "",
-  traceJournalPath: "",
   reportMarkdown: "",
   structuredReport: null as StructuredReport | null,
   errorMessage: "",
   activities: [] as WorkflowActivity[],
-  traceEntries: [] as TraceEntry[],
   activeSpeaker: "",
   activeTurnId: null as number | null,
   preparingTurn: null as PreparingTurn | null,
@@ -405,14 +390,6 @@ export const useDebateStore = create<DebateState>((set) => ({
     })),
   setReportMarkdown: (text) => set({ reportMarkdown: text }),
   setStructuredReport: (report) => set({ structuredReport: report }),
-  addTraceEntry: (entry) =>
-    set((s) => ({
-      traceEntries: pushTraceEntry(s.traceEntries, entry),
-    })),
-  setTraceJournalPath: (path) =>
-    set((s) => ({
-      traceJournalPath: s.traceJournalPath || path,
-    })),
   setError: (msg) =>
     set((s) => ({
       status: "error",

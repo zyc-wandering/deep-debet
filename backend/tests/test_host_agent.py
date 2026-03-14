@@ -20,6 +20,51 @@ class EmptySearch(SearchProvider):
         return []
 
 
+@pytest.mark.anyio
+async def test_create_debaters_parses_age_and_ethnicity_fields():
+    llm = SequencedLLM(
+        [
+            """
+            [
+              {
+                "name": "Amina Rahman",
+                "age": "34岁",
+                "ethnicity": "孟加拉裔英国人",
+                "background": "伦敦能源政策分析师，长期研究转型成本",
+                "stance": "支持渐进式推进",
+                "personality": "冷静审慎，偏证据链追踪型",
+                "speaking_style": "清晰克制",
+                "avatar_emoji": "📊"
+              },
+              {
+                "name": "Daniel Brooks",
+                "age": "52岁",
+                "ethnicity": "白人美国人",
+                "background": "制造业工会顾问，关注就业与现实冲击",
+                "stance": "反对激进改革",
+                "personality": "直接强硬，偏前提解构型",
+                "speaking_style": "锋利直接",
+                "avatar_emoji": "🏭"
+              }
+            ]
+            """
+        ]
+    )
+    agent = HostAgent(llm=llm, search=EmptySearch())
+
+    debaters = await agent.create_debaters(
+        topic="Should governments adopt a rapid carbon tax?",
+        debater_count=2,
+        brief="brief",
+    )
+
+    assert debaters[0].age == "34岁"
+    assert debaters[0].ethnicity == "孟加拉裔英国人"
+    assert debaters[0].name == "Amina Rahman"
+    assert debaters[1].age == "52岁"
+    assert debaters[1].ethnicity == "白人美国人"
+
+
 def test_normalize_structured_report_data_converts_argument_node_targets_to_strings():
     agent = HostAgent(llm=None, search=None)
     payload = {

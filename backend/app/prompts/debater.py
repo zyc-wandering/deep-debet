@@ -12,6 +12,8 @@ def _base_system_prompt_template(
     template = get_prompt_code_block(8, language)
     return (
         template.replace("{config.name}", config.name)
+        .replace("{config.age}", config.age)
+        .replace("{config.ethnicity}", config.ethnicity)
         .replace("{config.background}", config.background)
         .replace("{config.stance}", config.stance)
         .replace("{config.personality}", config.personality)
@@ -153,6 +155,8 @@ def build_follow_up_system_prompt(
     template = get_prompt_code_block(12, language)
     prompt = (
         template.replace("{config.name}", config.name)
+        .replace("{config.age}", config.age)
+        .replace("{config.ethnicity}", config.ethnicity)
         .replace("{config.background}", config.background)
         .replace("{config.stance}", config.stance)
         .replace("{config.personality}", config.personality)

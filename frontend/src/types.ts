@@ -16,25 +16,6 @@ export type DebateEventType =
   | "done"
   | "error";
 
-export interface TraceMeta {
-  trace_id: string;
-  span_id?: string;
-  parent_span_id?: string;
-  span_name?: string;
-  stage?: string;
-  event_seq: number;
-  emitted_at: string;
-  journal_path?: string;
-}
-
-export interface TraceEntry {
-  id: string;
-  event: DebateEventType | string;
-  session_id?: string;
-  trace: TraceMeta;
-  summary: string;
-}
-
 export type DebatePhase =
   | "idle"
   | "booting"
@@ -60,6 +41,8 @@ export type DebateRoomTab = "config" | "host" | "debate" | "summary";
 export interface DebaterConfig {
   id: string;
   name: string;
+  age: string;
+  ethnicity: string;
   background: string;
   stance: string;
   personality: string;

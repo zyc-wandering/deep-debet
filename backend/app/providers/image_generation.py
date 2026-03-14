@@ -126,29 +126,37 @@ class ImageGenerationService:
     def _generate_avatar_prompt(self, debater: dict) -> str:
         """Generate a prompt for debater avatar."""
         name = debater.get("name", "辩手")
+        age = debater.get("age", "年龄未说明")
+        ethnicity = debater.get("ethnicity", "人种/族裔未说明")
         background = debater.get("background", "专业人士")
         personality = debater.get("personality", "理性")
         stance = debater.get("stance", "中立")
         avatar_emoji = debater.get("avatar_emoji", "🎙️")
 
         # Create a vivid character description
-        prompt = f"""创建一个专业的辩论选手头像插画。
+        prompt = f"""创建一个专业的辩论选手头像，采用现代写实风格的高品质数字肖像。
 
 角色特征:
 - 姓名: {name}
+- 年龄: {age}
+- 人种/族裔: {ethnicity}
 - 身份: {background}
 - 性格: {personality}
 - 立场: {stance}
 - 代表符号: {avatar_emoji}
 
 艺术风格:
-- 现代扁平插画风，高品质数字艺术
-- 半身像，正面或3/4侧面角度
-- 人物表情自信、专注、有思想深度
-- 配色专业稳重，带有微妙的渐变
-- 背景简洁，使用柔和的几何色块
-- 整体氛围: 智慧、理性、专业
-- 画面质感细腻，光影柔和
+- 现代写实风格，高品质数字肖像，真实但不过度照片感
+- 半身像，正面或约30度侧面角度，主体清晰居中
+- 人物表情专注、克制、像在认真思考和审视问题
+- 穿着避免千篇一律的西装革履，应符合人物身份、职业、年龄与气质
+- 根据角色背景自然加入细节: 帽子、眼镜、胡须、发型、皮肤纹理、年龄痕迹、文化饰品等
+- 人种、年龄、职业特征要有辨识度，但呈现应自然、尊重、不刻板
+- 配色专业稳重，带有微妙层次和真实材质表现
+- 背景简洁虚化或柔和环境衬底，不喧宾夺主
+- 整体氛围: 智慧、理性、专业、有真实人物感
+- 光影柔和细腻，面部结构、肤质与小细节清楚可见
+- 避免模板化、避免所有角色看起来像同一种商务人像
 """
         return prompt.strip()
 

@@ -128,8 +128,8 @@ class HostAgent:
                 language=self.debate_language,
             ),
             schema_description=(
-                "返回 JSON 数组；每个元素必须包含 name, background, stance, personality, "
-                "speaking_style, avatar_emoji 六个字段。"
+                "返回 JSON 数组；每个元素必须包含 name, age, ethnicity, background, stance, "
+                "personality, speaking_style, avatar_emoji 八个字段。"
             ),
         )
 
@@ -160,17 +160,18 @@ class HostAgent:
             requirements = (
                 'Must include "Background Summary", "Core Arguments and Representative Reasoning per Debater", '
                 '"Key Clashes and Exposed Vulnerabilities", "Concessions, Revisions, and Position Changes", '
-                '"Synthesis", and "Final Verdict", and the verdict must include lines for '
-                '"Winning View", "Strongest Debater", and "Why It Won".'
+                '"Synthesis", and "Final Verdict", and the verdict must include '
+                '"Winning View", "Strongest Debater", and 2-3 independent "Reasons for Victory" '
+                'from different dimensions (logic, value, response capability).'
             )
             required_tokens = ["Background Summary", "Final Verdict", "Winning View", "Strongest Debater"]
         else:
             requirements = (
                 "必须包含“背景摘要”“各方核心观点与代表性论证”“关键交锋与漏洞暴露”"
                 "“让步、修正与立场变化”“综合分析”“最终裁决”六个部分，"
-                "且最终裁决必须包含三行：胜出观点、最强辩手、胜出原因。"
+                "且最终裁决的胜出原因必须提供2-3个独立的、不同维度的原因（如逻辑完整性、价值洞察、回应能力等）。"
             )
-            required_tokens = ["背景摘要", "最终裁决", "胜出观点", "最强辩手", "胜出原因"]
+            required_tokens = ["背景摘要", "最终裁决", "胜出观点", "最强辩手"]
 
         prompt = build_summary_prompt(topic, brief, transcript, language=self.debate_language)
         debate_logger.llm_request("host", "summarize_debate", {"topic": topic}, prompt_length=len(prompt))
@@ -301,26 +302,57 @@ class HostAgent:
             argument_nodes_count=len(report.argument_nodes),
         )
 
-        if self.debate_language == DebateLanguage.en:
-            conclusion_tokens = ["Winning View", "Strongest Debater", "Why It Won"]
-            repair_requirements = (
-                'Return only the host conclusion, and it must contain lines for '
-                '"Winning View", "Strongest Debater", and "Why It Won".'
+        # 验证 host_conclusion - 支持新的结构化格式（含 reasoning_list）或旧格式
+        host_conclusion_valid = False
+        if isinstance(report.host_conclusion, dict):
+            # 新格式：检查是否有 winning_argument 和 reasoning_list
+            hc = report.host_conclusion
+            host_conclusion_valid = (
+                hc.get("winning_argument")
+                and hc.get("strongest_debater")
+                and len(hc.get("reasoning_list", [])) >= 2
             )
-        else:
-            conclusion_tokens = ["胜出观点", "最强辩手", "胜出原因"]
-            repair_requirements = "只输出主持人结论，且必须包含三行：胜出观点、最强辩手、胜出原因。"
-        if not all(token in report.host_conclusion for token in conclusion_tokens):
+        elif isinstance(report.host_conclusion, str):
+            # 旧格式：检查是否包含必要的 token
+            if self.debate_language == DebateLanguage.en:
+                host_conclusion_valid = all(token in report.host_conclusion for token in ["Winning View", "Strongest Debater"])
+            else:
+                host_conclusion_valid = all(token in report.host_conclusion for token in ["胜出观点", "最强辩手"])
+
+        if not host_conclusion_valid:
+            if self.debate_language == DebateLanguage.en:
+                repair_requirements = (
+                    'Return a JSON object with fields: "winning_argument" (string), '
+                    '"strongest_debater" (string), "reasoning" (string), and '
+                    '"reasoning_list" (array of 2-3 independent reasons from different dimensions).'
+                )
+            else:
+                repair_requirements = (
+                    '返回JSON对象，包含字段："winning_argument"（胜出观点）、'
+                    '"strongest_debater"（最强辩手）、"reasoning"（裁决概述）、'
+                    '"reasoning_list"（2-3个独立胜出原因的字符串数组）'
+                )
+            raw_output = (
+                report.host_conclusion
+                if isinstance(report.host_conclusion, str)
+                else str(report.host_conclusion)
+            )
             repaired = await self._chat_markdown_with_requirements(
                 user_prompt=build_markdown_repair_prompt(
                     requirements=repair_requirements,
-                    raw_output=report.host_conclusion,
+                    raw_output=raw_output,
                     language=self.debate_language,
                 ),
                 requirements=repair_requirements,
-                required_tokens=conclusion_tokens,
+                required_tokens=["winning_argument", "strongest_debater", "reasoning_list"],
             )
-            report.host_conclusion = repaired
+            # 尝试解析修复后的JSON
+            try:
+                import json
+                repaired_dict = json.loads(repaired)
+                report.host_conclusion = repaired_dict
+            except Exception:
+                report.host_conclusion = repaired
             debate_logger.info(
                 "Host conclusion repaired",
                 event_type="host_conclusion_repaired",
@@ -463,17 +495,25 @@ class HostAgent:
     def _normalize_structured_report_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
         normalized = dict(data)
 
-        # 处理 host_conclusion - LLM 可能返回 dict 而不是 string
+        # 处理 host_conclusion - 支持新的结构化格式或旧格式
         host_conclusion = normalized.get("host_conclusion")
         if isinstance(host_conclusion, dict):
-            # 将 dict 转换为格式化的 markdown 字符串
-            lines = []
-            for key, value in host_conclusion.items():
-                # 将 snake_case 转换为可读格式
-                readable_key = key.replace("_", " ").title()
-                lines.append(f"**{readable_key}**: {value}")
-            normalized["host_conclusion"] = "\n\n".join(lines)
-        elif not isinstance(host_conclusion, str):
+            # 新格式：保留为字典，确保包含所有必要字段
+            hc = host_conclusion
+            # 确保 reasoning_list 存在且为列表
+            if "reasoning_list" not in hc or not isinstance(hc.get("reasoning_list"), list):
+                # 兼容旧格式或缺失字段：从 reasoning 字段拆分或创建默认值
+                reasoning = hc.get("reasoning", "")
+                if reasoning:
+                    # 尝试从 reasoning 字段创建 reasoning_list
+                    hc["reasoning_list"] = [reasoning]
+                else:
+                    hc["reasoning_list"] = []
+            normalized["host_conclusion"] = hc
+        elif isinstance(host_conclusion, str):
+            # 旧格式：保持为字符串，后续会触发修复
+            normalized["host_conclusion"] = host_conclusion
+        else:
             normalized["host_conclusion"] = str(host_conclusion) if host_conclusion else ""
 
         # 处理 argument_nodes

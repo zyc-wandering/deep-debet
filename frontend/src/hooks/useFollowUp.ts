@@ -1,25 +1,14 @@
 import { fetchEventSource } from "@microsoft/fetch-event-source";
 import { useCallback, useRef } from "react";
-import { FollowUpRequest, TraceEntry, TraceMeta } from "../types";
+import { FollowUpRequest } from "../types";
 import { useDebateStore } from "../store/debateStore";
 
 const API_BASE = (import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000").trim();
 
 type TraceAwarePayload = {
   session_id?: string;
-  _trace?: TraceMeta;
   [key: string]: unknown;
 };
-
-function buildTraceEntry(event: string, data: TraceAwarePayload, trace: TraceMeta): TraceEntry {
-  return {
-    id: `${trace.trace_id}-${trace.event_seq}`,
-    event,
-    session_id: typeof data.session_id === "string" ? data.session_id : undefined,
-    trace,
-    summary: event.replaceAll("_", " "),
-  };
-}
 
 export function useFollowUp() {
   const abortRef = useRef<AbortController | null>(null);
@@ -64,13 +53,6 @@ export function useFollowUp() {
         onmessage: async (msg) => {
           if (!msg.event) return;
           const data = (msg.data ? (JSON.parse(msg.data) as TraceAwarePayload) : {}) as TraceAwarePayload;
-          const trace = data._trace;
-          if (trace) {
-            useDebateStore.getState().addTraceEntry(buildTraceEntry(msg.event, data, trace));
-            if (typeof trace.journal_path === "string" && trace.journal_path) {
-              useDebateStore.getState().setTraceJournalPath(trace.journal_path);
-            }
-          }
 
           if (msg.event === "follow_up_token") {
             const tokenData = data as {

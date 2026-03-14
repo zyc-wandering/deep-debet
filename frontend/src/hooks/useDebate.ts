@@ -7,8 +7,6 @@ import {
   DebaterConfig,
   FocusOption,
   StructuredReport,
-  TraceEntry,
-  TraceMeta,
 } from "../types";
 import { useDebateStore } from "../store/debateStore";
 
@@ -43,38 +41,8 @@ interface PhasePayload {
 
 type TraceAwarePayload = {
   session_id?: string;
-  _trace?: TraceMeta;
   [key: string]: unknown;
 };
-
-function summarizeTraceEvent(event: string, data: TraceAwarePayload): string {
-  if (event === "phase") {
-    return typeof data.title === "string" ? data.title : "Phase update";
-  }
-  if (event === "debate_turn_start") {
-    return `${String(data.speaker || "Speaker")} turn ${Number(data.turn_id ?? 0) + 1} started`;
-  }
-  if (event === "debate_turn_end") {
-    return `${String(data.speaker || "Speaker")} turn ${Number(data.turn_id ?? 0) + 1} completed`;
-  }
-  if (event === "done") {
-    return "Debate run completed";
-  }
-  if (event === "error") {
-    return typeof data.message === "string" ? data.message : "Run failed";
-  }
-  return event.replaceAll("_", " ");
-}
-
-function buildTraceEntry(event: string, data: TraceAwarePayload, trace: TraceMeta): TraceEntry {
-  return {
-    id: `${trace.trace_id}-${trace.event_seq}`,
-    event,
-    session_id: typeof data.session_id === "string" ? data.session_id : undefined,
-    trace,
-    summary: summarizeTraceEvent(event, data),
-  };
-}
 
 export function useDebate() {
   const abortRef = useRef<AbortController | null>(null);
@@ -144,17 +112,6 @@ export function useDebate() {
     async (msg: MessageEvent) => {
       if (!msg.event) return;
       const data = (msg.data ? (JSON.parse(msg.data) as TraceAwarePayload) : {}) as TraceAwarePayload;
-      const trace = data._trace;
-
-      if (trace) {
-        useDebateStore.getState().addTraceEntry(buildTraceEntry(msg.event, data, trace));
-        if (typeof data.session_id === "string") {
-          useDebateStore.getState().setSessionId(data.session_id);
-        }
-        if (typeof trace.journal_path === "string" && trace.journal_path) {
-          useDebateStore.getState().setTraceJournalPath(trace.journal_path);
-        }
-      }
 
       if (msg.event === "phase") {
         const phaseData = data as PhasePayload;
@@ -296,13 +253,9 @@ export function useDebate() {
           session_id: string;
           report_path: string;
           summary_image_path?: string;
-          trace_journal_path?: string;
         };
         const summaryImageUrl = resolveImageUrl(apiBaseRef.current, doneData.summary_image_path);
         useDebateStore.getState().setDone(doneData.session_id, doneData.report_path, summaryImageUrl);
-        if (doneData.trace_journal_path) {
-          useDebateStore.getState().setTraceJournalPath(doneData.trace_journal_path);
-        }
         await fetchReport(doneData.report_path);
         abortRef.current?.abort();
         abortRef.current = null;

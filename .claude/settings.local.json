@@ -23,7 +23,12 @@
       "Bash(Get-ChildItem data/logs/sessions/ | Select-Object -First 10)",
       "Bash(find .. -name \"*.log\" -type f -mtime -1 2>/dev/null | head -20)",
       "Bash(ls -lt ../backend/backend.*.log | head -5)",
-      "Bash(ls -lt ../data/sessions/*.json | head -5)"
+      "Bash(ls -lt ../data/sessions/*.json | head -5)",
+      "Bash(npx skills:*)",
+      "mcp__mcp-registry__search_mcp_registry",
+      "Bash(Get-Content \"$env:USERPROFILE\\\\.claude\\\\claude_desktop_config.json\")",
+      "Bash(cmd /c \"type %USERPROFILE%\\\\.claude\\\\claude_desktop_config.json\")",
+      "Bash(cmd /c \"dir %USERPROFILE%\\\\.claude\"\")"
     ]
   }
 }

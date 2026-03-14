@@ -3,7 +3,6 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { DebateStream } from "../components/DebateStream";
 import { Timer } from "../components/Timer";
-import { TracePanel } from "../components/TracePanel";
 import { useDebate } from "../hooks/useDebate";
 import { useDebateStore } from "../store/debateStore";
 import { DebatePhase } from "../types";
@@ -78,9 +77,7 @@ export function DebateRoomPage({ onStop }: Props) {
   const hostSummary = useDebateStore((s) => s.hostSummary);
   const images = useDebateStore((s) => s.images);
   const reportPath = useDebateStore((s) => s.reportPath);
-  const traceJournalPath = useDebateStore((s) => s.traceJournalPath);
   const reportMarkdown = useDebateStore((s) => s.reportMarkdown);
-  const traceEntries = useDebateStore((s) => s.traceEntries);
   const activities = useDebateStore((s) => s.activities);
   const sessionId = useDebateStore((s) => s.sessionId);
   const errorMessage = useDebateStore((s) => s.errorMessage);
@@ -742,8 +739,6 @@ export function DebateRoomPage({ onStop }: Props) {
               {phaseDetail && <p className="muted">{phaseDetail}</p>}
             </div>
           </section>
-
-          <TracePanel traceEntries={traceEntries} traceJournalPath={traceJournalPath} />
         </aside>
       </div>
     </div>

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Union
 from uuid import uuid4
 
 from pydantic import BaseModel, Field, model_validator
@@ -48,6 +48,8 @@ class SearchResult(BaseModel):
 class DebaterConfig(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid4()))
     name: str
+    age: str = ""
+    ethnicity: str = ""
     background: str
     stance: str
     personality: str
@@ -140,13 +142,21 @@ class FollowUpResponse(BaseModel):
     streaming: bool = True
 
 
+class HostConclusion(BaseModel):
+    """Structured host conclusion with multiple reasoning dimensions."""
+    winning_argument: str = ""
+    strongest_debater: str = ""
+    reasoning: str = ""
+    reasoning_list: List[str] = Field(default_factory=list)
+
+
 class StructuredReport(BaseModel):
     """Structured report data for visualization."""
     background_summary: str = ""
     core_arguments: List[Dict[str, Any]] = Field(default_factory=list)
     clash_points: List[Dict[str, Any]] = Field(default_factory=list)
     synthesis: str = ""
-    host_conclusion: str = ""
+    host_conclusion: Union[str, HostConclusion] = ""
     argument_nodes: List[ArgumentNode] = Field(default_factory=list)
 
 
