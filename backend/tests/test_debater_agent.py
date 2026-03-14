@@ -44,9 +44,9 @@ def make_agent(llm: LLMProvider) -> DebaterAgent:
     return DebaterAgent(
         config=DebaterConfig(
             name="Zhou",
-            background="公共政策研究者",
-            stance="对 AI 替代部分初级分析工作持审慎监管态度",
-            personality="逻辑严谨，擅长追问前提、边界和责任链",
+            background="Policy researcher",
+            stance="Supports careful guardrails around agentic AI use",
+            personality="Analytical and detail-oriented",
             speaking_style="structured",
             avatar_emoji="Z",
         ),
@@ -57,21 +57,36 @@ def make_agent(llm: LLMProvider) -> DebaterAgent:
 
 
 def make_focus() -> FocusOption:
-    return FocusOption(name="执行风险", description="优先看现实落地成本与责任边界")
+    return FocusOption(name="Execution risk", description="Prioritize delivery cost and accountability")
 
 
 @pytest.mark.anyio
 async def test_produce_turn_returns_llm_output_directly():
-    agent = make_agent(StaticLLM("这是模型生成的发言。"))
+    agent = make_agent(StaticLLM("This is a plain debater answer."))
 
     text, references = await agent.produce_turn(
-        topic="AI 应该替代部分初级分析工作吗",
+        topic="Should teams use async updates by default?",
         brief="brief",
         messages=[],
         enable_search=False,
     )
 
-    assert text == "这是模型生成的发言。"
+    assert text == "This is a plain debater answer."
+    assert references == []
+
+
+@pytest.mark.anyio
+async def test_produce_turn_extracts_single_value_from_wrapped_json_object():
+    agent = make_agent(StaticLLM('{"opening_statement":"Only the value should remain."}'))
+
+    text, references = await agent.produce_turn(
+        topic="Should teams use async updates by default?",
+        brief="brief",
+        messages=[],
+        enable_search=False,
+    )
+
+    assert text == "Only the value should remain."
     assert references == []
 
 
@@ -81,7 +96,7 @@ async def test_produce_turn_raises_when_llm_fails_instead_of_using_hardcoded_fal
 
     with pytest.raises(RuntimeError):
         await agent.produce_turn(
-            topic="AI 应该替代部分初级分析工作吗",
+            topic="Should teams use async updates by default?",
             brief="brief",
             messages=[],
             enable_search=False,
@@ -90,22 +105,42 @@ async def test_produce_turn_raises_when_llm_fails_instead_of_using_hardcoded_fal
 
 @pytest.mark.anyio
 async def test_stream_stage_falls_back_to_non_stream_llm_response_only():
-    agent = make_agent(StreamFailChatOKLLM("这是非流式模型返回。"))
+    agent = make_agent(StreamFailChatOKLLM("This is the fallback answer."))
 
     chunks = []
     async for token in agent.produce_turn_stream_stage(
-        topic="AI 应该替代部分初级分析工作吗",
+        topic="Should teams use async updates by default?",
         brief="brief",
-        messages=[DebateMessage(speaker="Lin", role="debater", content="上一轮发言", turn_index=0)],
+        messages=[DebateMessage(speaker="Lin", role="debater", content="Previous point", turn_index=0)],
         stage=DebateStage.free_debate,
         intensity="balanced",
         enable_search=False,
         selected_focus=make_focus(),
-        user_context="重点看责任边界。",
+        user_context="Prefer practical tradeoffs.",
     ):
         chunks.append(token)
 
-    assert "".join(chunks) == "这是非流式模型返回。"
+    assert "".join(chunks) == "This is the fallback answer."
+
+
+@pytest.mark.anyio
+async def test_stream_stage_extracts_value_from_wrapped_json_object():
+    agent = make_agent(StaticLLM('{"free_debate_speech":"Attack the argument, not the wrapper."}'))
+
+    chunks = []
+    async for token in agent.produce_turn_stream_stage(
+        topic="Should teams use async updates by default?",
+        brief="brief",
+        messages=[],
+        stage=DebateStage.free_debate,
+        intensity="balanced",
+        enable_search=False,
+        selected_focus=make_focus(),
+        user_context="",
+    ):
+        chunks.append(token)
+
+    assert "".join(chunks) == "Attack the argument, not the wrapper."
 
 
 def test_stage_prompt_requires_concession_and_rebuild_when_broken():
@@ -114,8 +149,8 @@ def test_stage_prompt_requires_concession_and_rebuild_when_broken():
     prompt = agent._system_prompt_stage(DebateStage.free_debate, "intense", make_focus(), "")
     instruction = agent._get_stage_instruction(DebateStage.free_debate, make_focus(), "")
 
-    assert "先承认具体问题" in prompt
-    assert "重建" in instruction
+    assert "concession" in prompt.lower() or "承认" in prompt
+    assert "rebuild" in instruction.lower() or "重建" in instruction
 
 
 def test_english_mode_uses_english_output_override():

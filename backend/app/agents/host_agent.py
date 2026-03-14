@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
+from time import monotonic
 from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 
 from app.models import (
@@ -26,8 +26,7 @@ from app.prompts.host import (
     get_host_system_prompt,
 )
 from app.providers.base import LLMProvider, SearchProvider
-
-logger = logging.getLogger(__name__)
+from app.utils.logger import debate_logger
 
 
 class HostAgent:
@@ -45,6 +44,7 @@ class HostAgent:
         return get_host_system_prompt(self.debate_language)
 
     async def research_topic(self, topic: str) -> Tuple[str, List[SearchResult]]:
+        research_start = monotonic()
         queries = [topic]
         if self.debate_language == DebateLanguage.en:
             queries.extend([f"{topic} controversy", f"{topic} data research report"])
@@ -54,8 +54,16 @@ class HostAgent:
         all_results: List[SearchResult] = []
         for query in queries:
             try:
-                all_results.extend(await self.search.search(query, num_results=3))
-            except Exception:
+                debate_logger.search_request(query, "tavily", 3)
+                results = await self.search.search(query, num_results=3)
+                all_results.extend(results)
+            except Exception as exc:
+                debate_logger.warning(
+                    f"Search failed for query: {query}",
+                    event_type="search_error",
+                    query=query,
+                    error=str(exc),
+                )
                 continue
 
         citations_text = "\n".join(f"- {r.title}: {r.snippet[:160]} ({r.url})" for r in all_results[:9])
@@ -65,8 +73,38 @@ class HostAgent:
             else:
                 citations_text = "- 未检索到可用外部材料。请明确区分已知、推测与待验证部分。"
 
-        brief = await self._chat_required_text(
-            build_research_prompt(topic, citations_text, language=self.debate_language)
+        prompt = build_research_prompt(topic, citations_text, language=self.debate_language)
+        debate_logger.llm_request("host", "research_topic", {"topic": topic}, prompt_length=len(prompt))
+
+        llm_start = monotonic()
+        try:
+            brief = await self._chat_required_text(prompt)
+            debate_logger.llm_response(
+                "host",
+                "research_topic",
+                duration_sec=monotonic() - llm_start,
+                token_count=len(brief) // 4,
+                response_length=len(brief),
+                success=True,
+            )
+        except Exception as exc:
+            debate_logger.llm_response(
+                "host",
+                "research_topic",
+                duration_sec=monotonic() - llm_start,
+                token_count=0,
+                response_length=0,
+                success=False,
+                error=str(exc),
+            )
+            raise
+
+        debate_logger.info(
+            "Research completed",
+            event_type="research_complete",
+            duration_sec=monotonic() - research_start,
+            query_count=len(queries),
+            result_count=len(all_results),
         )
         return brief, all_results
 
@@ -107,7 +145,17 @@ class HostAgent:
         messages: List[DebateMessage],
         references: List[SearchResult],
     ) -> str:
+        summarize_start = monotonic()
         transcript = "\n".join(f"- {m.speaker}: {m.content}" for m in messages)
+        transcript_length = len(transcript)
+        debate_logger.info(
+            "Starting summarize_debate",
+            event_type="summarize_debate_start",
+            topic=topic,
+            message_count=len(messages),
+            transcript_length=transcript_length,
+        )
+
         if self.debate_language == DebateLanguage.en:
             requirements = (
                 'Must include "Background Summary", "Core Arguments and Representative Reasoning per Debater", '
@@ -123,11 +171,49 @@ class HostAgent:
                 "且最终裁决必须包含三行：胜出观点、最强辩手、胜出原因。"
             )
             required_tokens = ["背景摘要", "最终裁决", "胜出观点", "最强辩手", "胜出原因"]
-        return await self._chat_markdown_with_requirements(
-            user_prompt=build_summary_prompt(topic, brief, transcript, language=self.debate_language),
-            requirements=requirements,
-            required_tokens=required_tokens,
-        )
+
+        prompt = build_summary_prompt(topic, brief, transcript, language=self.debate_language)
+        debate_logger.llm_request("host", "summarize_debate", {"topic": topic}, prompt_length=len(prompt))
+
+        llm_start = monotonic()
+        try:
+            result = await self._chat_markdown_with_requirements(
+                user_prompt=prompt,
+                requirements=requirements,
+                required_tokens=required_tokens,
+            )
+            debate_logger.llm_response(
+                "host",
+                "summarize_debate",
+                duration_sec=monotonic() - llm_start,
+                token_count=len(result) // 4,
+                response_length=len(result),
+                success=True,
+            )
+            debate_logger.info(
+                "summarize_debate completed",
+                event_type="summarize_debate_complete",
+                duration_sec=monotonic() - summarize_start,
+                result_length=len(result),
+            )
+            return result
+        except Exception as exc:
+            debate_logger.llm_response(
+                "host",
+                "summarize_debate",
+                duration_sec=monotonic() - llm_start,
+                token_count=0,
+                response_length=0,
+                success=False,
+                error=str(exc),
+            )
+            debate_logger.error(
+                "summarize_debate failed",
+                event_type="summarize_debate_error",
+                duration_sec=monotonic() - summarize_start,
+                exc=exc,
+            )
+            raise
 
     async def extract_focus_options(self, topic: str, brief: str) -> List[FocusOption]:
         data = await self._chat_json_array(
@@ -146,21 +232,75 @@ class HostAgent:
         messages: List[DebateMessage],
         references: List[SearchResult],
     ) -> StructuredReport:
+        summarize_start = monotonic()
         transcript = "\n".join(f"- {m.speaker}: {m.content}" for m in messages)
-        data = await self._chat_json_object(
-            user_prompt=build_structured_summary_prompt(
-                topic,
-                brief,
-                transcript,
-                language=self.debate_language,
-            ),
-            schema_description=(
-                "返回 JSON 对象，必须包含 background_summary, core_arguments, clash_points, "
-                "synthesis, host_conclusion, argument_nodes 六个字段。"
-            ),
+        debate_logger.info(
+            "Starting summarize_debate_structured",
+            event_type="summarize_structured_start",
+            topic=topic,
+            message_count=len(messages),
+            transcript_length=len(transcript),
         )
+
+        prompt = build_structured_summary_prompt(
+            topic,
+            brief,
+            transcript,
+            language=self.debate_language,
+        )
+        debate_logger.llm_request(
+            "host",
+            "summarize_debate_structured",
+            {"topic": topic},
+            prompt_length=len(prompt),
+        )
+
+        llm_start = monotonic()
+        try:
+            data = await self._chat_json_object(
+                user_prompt=prompt,
+                schema_description=(
+                    "返回 JSON 对象，必须包含 background_summary, core_arguments, clash_points, "
+                    "synthesis, host_conclusion, argument_nodes 六个字段。"
+                ),
+            )
+            debate_logger.llm_response(
+                "host",
+                "summarize_debate_structured",
+                duration_sec=monotonic() - llm_start,
+                token_count=len(str(data)) // 4,
+                response_length=len(str(data)),
+                success=True,
+            )
+        except Exception as exc:
+            debate_logger.llm_response(
+                "host",
+                "summarize_debate_structured",
+                duration_sec=monotonic() - llm_start,
+                token_count=0,
+                response_length=0,
+                success=False,
+                error=str(exc),
+            )
+            debate_logger.error(
+                "summarize_debate_structured failed",
+                event_type="summarize_structured_error",
+                duration_sec=monotonic() - summarize_start,
+                exc=exc,
+            )
+            raise
+
         normalized = self._normalize_structured_report_data(data)
         report = StructuredReport(**normalized)
+        debate_logger.info(
+            "summarize_debate_structured data parsed",
+            event_type="summarize_structured_parsed",
+            synthesis_length=len(report.synthesis),
+            core_arguments_count=len(report.core_arguments),
+            clash_points_count=len(report.clash_points),
+            argument_nodes_count=len(report.argument_nodes),
+        )
+
         if self.debate_language == DebateLanguage.en:
             conclusion_tokens = ["Winning View", "Strongest Debater", "Why It Won"]
             repair_requirements = (
@@ -181,6 +321,17 @@ class HostAgent:
                 required_tokens=conclusion_tokens,
             )
             report.host_conclusion = repaired
+            debate_logger.info(
+                "Host conclusion repaired",
+                event_type="host_conclusion_repaired",
+                original_conclusion=report.host_conclusion[:200],
+                repaired_conclusion=repaired[:200],
+            )
+        debate_logger.info(
+            "summarize_debate_structured completed",
+            event_type="summarize_structured_complete",
+            duration_sec=monotonic() - summarize_start,
+        )
         return report
 
     async def follow_up_stream(
@@ -210,7 +361,11 @@ class HostAgent:
             if yield_count == 0:
                 raise ValueError("Empty streamed response")
         except Exception as exc:
-            logger.warning("Host follow-up stream fallback to non-stream chat: %s", exc)
+            debate_logger.warning(
+                "Host follow-up stream fallback to non-stream chat",
+                event_type="host_follow_up_fallback",
+                error=str(exc),
+            )
             text = await self._chat_required_text(user_prompt)
             for char in text:
                 yield char
@@ -307,6 +462,21 @@ class HostAgent:
 
     def _normalize_structured_report_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
         normalized = dict(data)
+
+        # 处理 host_conclusion - LLM 可能返回 dict 而不是 string
+        host_conclusion = normalized.get("host_conclusion")
+        if isinstance(host_conclusion, dict):
+            # 将 dict 转换为格式化的 markdown 字符串
+            lines = []
+            for key, value in host_conclusion.items():
+                # 将 snake_case 转换为可读格式
+                readable_key = key.replace("_", " ").title()
+                lines.append(f"**{readable_key}**: {value}")
+            normalized["host_conclusion"] = "\n\n".join(lines)
+        elif not isinstance(host_conclusion, str):
+            normalized["host_conclusion"] = str(host_conclusion) if host_conclusion else ""
+
+        # 处理 argument_nodes
         raw_nodes = normalized.get("argument_nodes") or []
         nodes: List[Dict[str, Any]] = []
         for raw_node in raw_nodes:

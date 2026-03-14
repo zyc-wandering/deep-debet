@@ -1,9 +1,25 @@
 import { fetchEventSource } from "@microsoft/fetch-event-source";
 import { useCallback, useRef } from "react";
-import { FollowUpRequest } from "../types";
+import { FollowUpRequest, TraceEntry, TraceMeta } from "../types";
 import { useDebateStore } from "../store/debateStore";
 
 const API_BASE = (import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000").trim();
+
+type TraceAwarePayload = {
+  session_id?: string;
+  _trace?: TraceMeta;
+  [key: string]: unknown;
+};
+
+function buildTraceEntry(event: string, data: TraceAwarePayload, trace: TraceMeta): TraceEntry {
+  return {
+    id: `${trace.trace_id}-${trace.event_seq}`,
+    event,
+    session_id: typeof data.session_id === "string" ? data.session_id : undefined,
+    trace,
+    summary: event.replaceAll("_", " "),
+  };
+}
 
 export function useFollowUp() {
   const abortRef = useRef<AbortController | null>(null);
@@ -47,34 +63,42 @@ export function useFollowUp() {
         },
         onmessage: async (msg) => {
           if (!msg.event) return;
+          const data = (msg.data ? (JSON.parse(msg.data) as TraceAwarePayload) : {}) as TraceAwarePayload;
+          const trace = data._trace;
+          if (trace) {
+            useDebateStore.getState().addTraceEntry(buildTraceEntry(msg.event, data, trace));
+            if (typeof trace.journal_path === "string" && trace.journal_path) {
+              useDebateStore.getState().setTraceJournalPath(trace.journal_path);
+            }
+          }
 
           if (msg.event === "follow_up_token") {
-            const data = JSON.parse(msg.data) as {
+            const tokenData = data as {
               session_id: string;
               follow_up_id: string;
               target_role: string;
               token: string;
             };
-            useDebateStore.getState().appendFollowUpToken(data.follow_up_id, data.token);
+            useDebateStore.getState().appendFollowUpToken(tokenData.follow_up_id, tokenData.token);
             return;
           }
 
           if (msg.event === "follow_up_end") {
-            const data = JSON.parse(msg.data) as {
+            const endData = data as {
               session_id: string;
               follow_up_id: string;
               target_role: string;
               full_response: string;
             };
-            useDebateStore.getState().finalizeFollowUp(data.follow_up_id, data.full_response);
+            useDebateStore.getState().finalizeFollowUp(endData.follow_up_id, endData.full_response);
             abortRef.current?.abort();
             abortRef.current = null;
             return;
           }
 
           if (msg.event === "error") {
-            const data = JSON.parse(msg.data) as { message: string };
-            useDebateStore.getState().setError(data.message || "Follow-up error");
+            const errorData = data as { message: string };
+            useDebateStore.getState().setError(errorData.message || "Follow-up error");
             useDebateStore.getState().setFollowUpStreaming(false);
             abortRef.current = null;
           }

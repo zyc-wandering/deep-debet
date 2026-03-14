@@ -104,7 +104,7 @@ class DebateMessage(BaseModel):
 class DebateStartRequest(BaseModel):
     topic: str = Field(min_length=5, max_length=240)
     debater_count: int = Field(default=3, ge=2, le=5)
-    time_limit_sec: int = Field(default=360, ge=60, le=1800)
+    time_limit_sec: int = Field(default=1800, ge=60, le=1800)
     max_turns: int = Field(default=24, ge=4, le=80)
     enable_debater_search: bool = False
     debate_language: DebateLanguage = DebateLanguage.zh
@@ -152,6 +152,7 @@ class StructuredReport(BaseModel):
 
 class DebateSession(BaseModel):
     session_id: str = Field(default_factory=lambda: str(uuid4()))
+    trace_id: str = Field(default_factory=lambda: str(uuid4()))
     topic: str
     model_variant: DebateModelVariant = DebateModelVariant.lite
     debate_language: DebateLanguage = DebateLanguage.zh
@@ -184,6 +185,7 @@ class DebateSession(BaseModel):
     # Structured report data
     structured_report: Optional[StructuredReport] = None
     report_path: Optional[str] = None
+    trace_journal_path: Optional[str] = None
 
 
 class SSEEvent(BaseModel):

@@ -3,6 +3,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { DebateStream } from "../components/DebateStream";
 import { Timer } from "../components/Timer";
+import { TracePanel } from "../components/TracePanel";
 import { useDebate } from "../hooks/useDebate";
 import { useDebateStore } from "../store/debateStore";
 import { DebatePhase } from "../types";
@@ -76,13 +77,17 @@ export function DebateRoomPage({ onStop }: Props) {
   const hostResearch = useDebateStore((s) => s.hostResearch);
   const hostSummary = useDebateStore((s) => s.hostSummary);
   const images = useDebateStore((s) => s.images);
+  const reportPath = useDebateStore((s) => s.reportPath);
+  const traceJournalPath = useDebateStore((s) => s.traceJournalPath);
   const reportMarkdown = useDebateStore((s) => s.reportMarkdown);
+  const traceEntries = useDebateStore((s) => s.traceEntries);
   const activities = useDebateStore((s) => s.activities);
   const sessionId = useDebateStore((s) => s.sessionId);
   const errorMessage = useDebateStore((s) => s.errorMessage);
   const topic = useDebateStore((s) => s.topic);
   const activeSpeaker = useDebateStore((s) => s.activeSpeaker);
   const activeTurnId = useDebateStore((s) => s.activeTurnId);
+  const preparingTurn = useDebateStore((s) => s.preparingTurn);
 
   const focusOptions = useDebateStore((s) => s.focusOptions);
   const selectedFocusId = useDebateStore((s) => s.selectedFocusId);
@@ -123,11 +128,11 @@ export function DebateRoomPage({ onStop }: Props) {
   }, [phase, setTab]);
 
   const mergedLines = useMemo(() => {
-    const live = Object.entries(buffers).map(([key, content]) => {
+    const live = Object.entries(buffers).map(([key, buffer]) => {
       const lastDash = key.lastIndexOf("-");
       const speaker = lastDash > 0 ? key.slice(0, lastDash) : key;
       const turnId = Number(lastDash > 0 ? key.slice(lastDash + 1) : 0);
-      return { key, speaker, turnId, content, isLive: true };
+      return { key, speaker, turnId, content: buffer.content, stage: buffer.stage, isLive: true };
     });
     return [...lines, ...live].sort((a, b) => a.turnId - b.turnId);
   }, [lines, buffers]);
@@ -138,6 +143,9 @@ export function DebateRoomPage({ onStop }: Props) {
   const selectedFocus = focusOptions.find((option) => option.id === selectedFocusId);
   const recentActivities = activities.slice(-6).reverse();
   const summaryBackdrop = images.summary || images.background;
+  const displaySpeaker = preparingTurn?.speaker || activeSpeaker;
+  const displayTurnId = preparingTurn?.turnId ?? activeTurnId;
+  const isPreparingTurn = Boolean(preparingTurn);
 
   const progressSteps = roomSteps.map((step) => {
     const currentOrder = phaseOrder[phase];
@@ -230,22 +238,25 @@ export function DebateRoomPage({ onStop }: Props) {
             className={currentTab === "host" ? "active" : ""}
             onClick={() => setTab("host")}
             disabled={phase === "idle"}
+            title="主持人工作台"
           >
-            主持人工作台
+            工作台
           </button>
           <button
             className={currentTab === "debate" ? "active" : ""}
             onClick={() => setTab("debate")}
             disabled={!debaters.length}
+            title="辩论舞台"
           >
-            辩论舞台
+            辩论
           </button>
           <button
             className={currentTab === "summary" ? "active" : ""}
             onClick={() => setTab("summary")}
             disabled={phase !== "complete"}
+            title="总结报告"
           >
-            总结报告
+            报告
           </button>
         </nav>
 
@@ -255,12 +266,14 @@ export function DebateRoomPage({ onStop }: Props) {
             <span>{phaseLabel}</span>
           </div>
           {running ? (
-            <button className="stop-button" onClick={onStop}>
-              结束本轮
+            <button className="stop-button" onClick={onStop} title="结束辩论">
+              <span className="stop-icon" aria-hidden="true">■</span>
+              <span>停止</span>
             </button>
           ) : (
             <button className="sidebar-action primary" onClick={() => window.location.reload()}>
-              开始新会话
+              <span className="action-icon">+</span>
+              <span className="action-label">新会话</span>
             </button>
           )}
         </div>
@@ -295,11 +308,11 @@ export function DebateRoomPage({ onStop }: Props) {
               </article>
               <article className="sidebar-stat-card">
                 <span>当前发言</span>
-                <strong>{activeSpeaker || "主持人"}</strong>
+                <strong>{displaySpeaker || "主持人"}</strong>
               </article>
               <article className="sidebar-stat-card">
                 <span>轮次</span>
-                <strong>{activeTurnId !== null ? activeTurnId + 1 : "--"}</strong>
+                <strong>{displayTurnId !== null ? displayTurnId + 1 : "--"}</strong>
               </article>
               <article className="sidebar-stat-card">
                 <span>计时</span>
@@ -476,11 +489,11 @@ export function DebateRoomPage({ onStop }: Props) {
                     <div className="actions">
                       <button
                         type="button"
-                        className="primary-button"
+                        className="primary-button large"
                         disabled={!canConfigure}
                         onClick={() => void handleConfigure()}
                       >
-                        继续进入辩论
+                        开始辩论
                       </button>
                     </div>
                   </div>
@@ -585,11 +598,19 @@ export function DebateRoomPage({ onStop }: Props) {
                 <section className="stage-header">
                   <div className="stage-header-copy">
                     <p className="eyebrow">辩论舞台</p>
-                    <h2>{activeSpeaker ? `${activeSpeaker} 正在发言` : "辩论记录正在展开"}</h2>
+                    <h2>
+                      {isPreparingTurn
+                        ? `${displaySpeaker || "辩手"} 正在准备发言`
+                        : displaySpeaker
+                          ? `${displaySpeaker} 正在发言`
+                          : "辩论记录正在展开"}
+                    </h2>
                     <p>
-                      {activeSpeaker && activeTurnId !== null
-                        ? `当前是第 ${activeTurnId + 1} 轮，系统正在实时生成该辩手的发言内容。`
-                        : "整场辩论会按阶段、按轮次实时更新，而不是一次性输出整篇结果。"}
+                      {isPreparingTurn && displayTurnId !== null
+                        ? `当前是第 ${displayTurnId + 1} 轮，loading 中，系统正在为该辩手整理上下文并准备输出。`
+                        : displaySpeaker && displayTurnId !== null
+                          ? `当前是第 ${displayTurnId + 1} 轮，系统正在实时生成该辩手的发言内容。`
+                          : "整场辩论会按阶段、按轮次实时更新，而不是一次性输出整篇结果。"}
                     </p>
                   </div>
 
@@ -602,60 +623,59 @@ export function DebateRoomPage({ onStop }: Props) {
                   </div>
                 </section>
 
-                <DebateStream lines={mergedLines} />
+                <DebateStream lines={mergedLines} preparingTurn={preparingTurn} />
               </div>
             </div>
           )}
 
           {currentTab === "summary" && (
             <div className="tab-content summary-tab">
-              {summaryBackdrop && (
-                <div className="summary-stage-bg">
-                  <img src={summaryBackdrop} alt="辩论总结背景" className="summary-bg-image" />
-                  <div className="summary-overlay" />
-                </div>
-              )}
-
               <div className="summary-stage-content">
-              <section className="workspace-section summary-hero-section">
-                <div className="workspace-hero-copy">
-                  <p className="eyebrow">总结报告</p>
-                  <h2>主持人综合判断与最终输出</h2>
-                  <p>实时交锋结束后，整场辩论会被整理成一份更适合阅读和回看的报告。</p>
-                </div>
-              </section>
-
-              <div className="summary-content">
-                {images.summary && (
-                  <div className="summary-poster">
-                    <img src={images.summary} alt="辩论总结海报" />
+                <section className="workspace-section summary-hero-section">
+                  <div className="workspace-hero-copy">
+                    <p className="eyebrow">总结报告</p>
+                    <h2>主持人综合判断与最终输出</h2>
+                    <p>实时交锋结束后，整场辩论会被整理成一份更适合阅读和回看的报告。</p>
                   </div>
-                )}
+                </section>
 
-                <div className="summary-report">
-                  <header className="section-header">
-                    <div>
-                      <p className="eyebrow">Markdown 报告</p>
-                      <h2>会话总结</h2>
-                    </div>
-                  </header>
+                <div className="summary-content">
+                  <div className="summary-report">
+                    {summaryBackdrop && (
+                      <div className="summary-report-bg">
+                        <img src={summaryBackdrop} alt="辩论总结背景" className="summary-report-bg-image" />
+                        <div className="summary-report-bg-overlay" />
+                      </div>
+                    )}
 
-                  {reportMarkdown ? (
-                    <article className="markdown-body">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{reportMarkdown}</ReactMarkdown>
-                    </article>
-                  ) : hostSummary ? (
-                    <div className="summary-streaming markdown-body">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{hostSummary}</ReactMarkdown>
+                    <div className="summary-report-content">
+                      <header className="section-header">
+                        <div>
+                          <p className="eyebrow">Markdown 报告</p>
+                          <h2>会话总结</h2>
+                        </div>
+                        {reportPath && <span className="report-save-status">已写入本地</span>}
+                      </header>
+
+                      {reportPath && <p className="report-location">{reportPath}</p>}
+
+                      {reportMarkdown ? (
+                        <article className="markdown-body">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>{reportMarkdown}</ReactMarkdown>
+                        </article>
+                      ) : hostSummary ? (
+                        <div className="summary-streaming markdown-body">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>{hostSummary}</ReactMarkdown>
+                        </div>
+                      ) : (
+                        <div className="summary-loading">
+                          <div className="loading-spinner" />
+                          <p>主持人仍在整理最终报告。</p>
+                        </div>
+                      )}
                     </div>
-                  ) : (
-                    <div className="summary-loading">
-                      <div className="loading-spinner" />
-                      <p>主持人仍在整理最终报告。</p>
-                    </div>
-                  )}
+                  </div>
                 </div>
-              </div>
               </div>
             </div>
           )}
@@ -686,25 +706,28 @@ export function DebateRoomPage({ onStop }: Props) {
 
             <div className="sidebar-actions">
               <button
-                className="sidebar-action"
+                className={`sidebar-action ${currentTab === "host" ? "is-active" : ""}`}
                 onClick={() => setTab("host")}
                 disabled={currentTab === "host" || phase === "idle"}
               >
-                查看主持人工作台
+                <span className="action-icon" aria-hidden="true">◈</span>
+                <span className="action-label">工作台</span>
               </button>
               <button
-                className="sidebar-action"
+                className={`sidebar-action ${currentTab === "debate" ? "is-active" : ""}`}
                 onClick={() => setTab("debate")}
                 disabled={currentTab === "debate" || !debaters.length}
               >
-                进入辩论舞台
+                <span className="action-icon" aria-hidden="true">◆</span>
+                <span className="action-label">辩论</span>
               </button>
               <button
-                className="sidebar-action"
+                className={`sidebar-action ${currentTab === "summary" ? "is-active" : ""}`}
                 onClick={() => setTab("summary")}
                 disabled={currentTab === "summary" || phase !== "complete"}
               >
-                查看总结报告
+                <span className="action-icon" aria-hidden="true">✦</span>
+                <span className="action-label">报告</span>
               </button>
             </div>
           </section>
@@ -719,6 +742,8 @@ export function DebateRoomPage({ onStop }: Props) {
               {phaseDetail && <p className="muted">{phaseDetail}</p>}
             </div>
           </section>
+
+          <TracePanel traceEntries={traceEntries} traceJournalPath={traceJournalPath} />
         </aside>
       </div>
     </div>

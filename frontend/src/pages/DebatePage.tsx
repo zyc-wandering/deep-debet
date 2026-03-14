@@ -46,11 +46,11 @@ export function DebatePage() {
   }, [debateDeadlineMs, phase]);
 
   const mergedLines = useMemo(() => {
-    const live = Object.entries(buffers).map(([key, content]) => {
+    const live = Object.entries(buffers).map(([key, buffer]) => {
       const lastDash = key.lastIndexOf("-");
       const speaker = lastDash > 0 ? key.slice(0, lastDash) : key;
       const turnId = Number(lastDash > 0 ? key.slice(lastDash + 1) : 0);
-      return { key, speaker, turnId, content, isLive: true };
+      return { key, speaker, turnId, content: buffer.content, stage: buffer.stage, isLive: true };
     });
     return [...lines, ...live].sort((a, b) => a.turnId - b.turnId);
   }, [lines, buffers]);

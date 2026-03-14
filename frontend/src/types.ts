@@ -6,6 +6,7 @@ export type DebateEventType =
   | "background_ready"
   | "avatars_ready"
   | "stage_change" // Debate stage changed (opening/free/closing)
+  | "debate_turn_start"
   | "debate_token"
   | "debate_turn_end"
   | "host_summary"
@@ -14,6 +15,25 @@ export type DebateEventType =
   | "follow_up_end" // Follow-up response complete
   | "done"
   | "error";
+
+export interface TraceMeta {
+  trace_id: string;
+  span_id?: string;
+  parent_span_id?: string;
+  span_name?: string;
+  stage?: string;
+  event_seq: number;
+  emitted_at: string;
+  journal_path?: string;
+}
+
+export interface TraceEntry {
+  id: string;
+  event: DebateEventType | string;
+  session_id?: string;
+  trace: TraceMeta;
+  summary: string;
+}
 
 export type DebatePhase =
   | "idle"
@@ -111,6 +131,12 @@ export interface DebateLine {
   turnId: number;
   isLive?: boolean;
   stage?: DebateStage; // Which debate stage this line belongs to
+}
+
+export interface PreparingTurn {
+  speaker: string;
+  turnId: number;
+  stage?: DebateStage;
 }
 
 export interface WorkflowActivity {

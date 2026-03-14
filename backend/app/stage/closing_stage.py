@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from time import monotonic
 from typing import AsyncGenerator
 
 from app.models import DebateStage, DebateMessage, SSEEvent
 from app.stage.base import DebateStageExecutor, StageContext
 from app.execution.turn_executor import DebaterTurnExecutor
+from app.utils.logger import debate_logger
 
 
 class ClosingStageExecutor(DebateStageExecutor):
@@ -27,8 +29,16 @@ class ClosingStageExecutor(DebateStageExecutor):
 
     async def execute(self, ctx: StageContext) -> AsyncGenerator[SSEEvent, None]:
         """执行总结陈词阶段"""
+        stage_start = monotonic()
         stage = DebateStage.closing
         turn_id = ctx.start_turn_id
+
+        debate_logger.info(
+            "Closing stage started",
+            event_type="closing_stage_start",
+            session_id=ctx.session.session_id,
+            debater_count=len(ctx.debater_agents),
+        )
 
         for agent in ctx.debater_agents:
             if ctx.session.stop_requested or self._deadline_passed(ctx):
@@ -48,6 +58,14 @@ class ClosingStageExecutor(DebateStageExecutor):
                 yield event
 
             turn_id += 1
+
+        debate_logger.info(
+            "Closing stage completed",
+            event_type="closing_stage_complete",
+            session_id=ctx.session.session_id,
+            duration_sec=monotonic() - stage_start,
+            total_turns=turn_id - ctx.start_turn_id,
+        )
 
     def should_advance(self, ctx: StageContext) -> bool:
         """总结阶段：每个辩手发言一次后结束"""

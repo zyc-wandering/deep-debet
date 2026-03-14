@@ -31,7 +31,9 @@ from app.stage import (
 )
 from app.storage.report_writer import ReportWriter
 from app.storage.session_store import SessionStore
+from app.storage.trace_store import TraceStore
 from app.utils.formatting import sse_event
+from app.utils.logger import debate_logger
 
 ensure_directories()
 
@@ -55,6 +57,7 @@ app.mount("/api/images", StaticFiles(directory=str(images_dir)), name="images")
 search_provider = TavilySearchProvider()
 session_store = SessionStore()
 report_writer = ReportWriter()
+trace_store = TraceStore()
 image_service = ImageGenerationService()
 turn_executor = DebaterTurnExecutor()
 
@@ -88,6 +91,11 @@ def get_session_store() -> SessionStore:
 def get_report_writer() -> ReportWriter:
     """Dependency: Get report writer singleton."""
     return report_writer
+
+
+def get_trace_store() -> TraceStore:
+    """Dependency: Get trace store singleton."""
+    return trace_store
 
 
 def get_image_service() -> ImageGenerationService:
@@ -135,6 +143,48 @@ def create_orchestrator(
     )
 
 
+def _serialize_traced_event(evt, store: SessionStore) -> str:
+    payload = dict(evt.data)
+    session_id = payload.get("session_id")
+    if not session_id:
+        return sse_event(evt.event, payload)
+
+    session = store.get(session_id)
+    trace_id = session.trace_id if session else session_id
+    trace_ctx = payload.get("_trace", {}) if isinstance(payload.get("_trace"), dict) else {}
+    envelope = trace_store.append_sse_event(
+        session_id=session_id,
+        trace_id=trace_id,
+        event_name=evt.event,
+        payload=payload,
+        span_id=trace_ctx.get("span_id"),
+        parent_span_id=trace_ctx.get("parent_span_id"),
+        stage=payload.get("stage") or payload.get("phase") or trace_ctx.get("stage"),
+    )
+
+    trace_payload = {
+        **trace_ctx,
+        **envelope.as_dict(),
+    }
+    payload["_trace"] = trace_payload
+
+    if session and session.trace_journal_path != envelope.journal_path:
+        session.trace_journal_path = envelope.journal_path
+        store.update(session)
+
+    with debate_logger.session_context(session_id, trace_id):
+        debate_logger.sse_event_sent(
+            evt.event,
+            session_id,
+            len(str(payload)),
+            envelope.event_seq,
+            source_span_id=trace_ctx.get("span_id"),
+            source_parent_span_id=trace_ctx.get("parent_span_id"),
+        )
+
+    return sse_event(evt.event, payload)
+
+
 def _looks_high_risk(topic: str) -> bool:
     """Check if topic contains high-risk content markers."""
     high_risk_markers = ["制造炸弹", "入侵系统", "洗钱", "恐怖袭击"]
@@ -165,7 +215,7 @@ async def start_debate(request: DebateStartRequest) -> StreamingResponse:
 
     async def event_stream() -> AsyncGenerator[str, None]:
         async for evt in orchestrator.start(request):
-            yield sse_event(evt.event, evt.data)
+            yield _serialize_traced_event(evt, session_store)
         # Explicit close marker for clients that need final newline flush.
         yield ": stream-end\n\n"
 
@@ -205,7 +255,7 @@ async def configure_debate(request: DebateConfigureRequest) -> StreamingResponse
 
     async def event_stream() -> AsyncGenerator[str, None]:
         async for evt in orchestrator.configure(request):
-            yield sse_event(evt.event, evt.data)
+            yield _serialize_traced_event(evt, session_store)
         yield ": stream-end\n\n"
 
     headers = {
@@ -282,7 +332,7 @@ async def follow_up(request: FollowUpRequest) -> StreamingResponse:
             target_role=request.target_role,
             question=request.question,
         ):
-            yield sse_event(evt.event, evt.data)
+            yield _serialize_traced_event(evt, session_store)
         yield ": stream-end\n\n"
 
     headers = {

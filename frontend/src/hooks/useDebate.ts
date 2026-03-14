@@ -1,6 +1,15 @@
 import { fetchEventSource } from "@microsoft/fetch-event-source";
 import { useCallback, useMemo, useRef } from "react";
-import { DebateConfigureRequest, DebatePhase, DebateStartRequest, DebaterConfig, FocusOption } from "../types";
+import {
+  DebateConfigureRequest,
+  DebatePhase,
+  DebateStartRequest,
+  DebaterConfig,
+  FocusOption,
+  StructuredReport,
+  TraceEntry,
+  TraceMeta,
+} from "../types";
 import { useDebateStore } from "../store/debateStore";
 
 const DEFAULT_API_BASE = (import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000").trim();
@@ -32,12 +41,50 @@ interface PhasePayload {
   detail?: string;
 }
 
+type TraceAwarePayload = {
+  session_id?: string;
+  _trace?: TraceMeta;
+  [key: string]: unknown;
+};
+
+function summarizeTraceEvent(event: string, data: TraceAwarePayload): string {
+  if (event === "phase") {
+    return typeof data.title === "string" ? data.title : "Phase update";
+  }
+  if (event === "debate_turn_start") {
+    return `${String(data.speaker || "Speaker")} turn ${Number(data.turn_id ?? 0) + 1} started`;
+  }
+  if (event === "debate_turn_end") {
+    return `${String(data.speaker || "Speaker")} turn ${Number(data.turn_id ?? 0) + 1} completed`;
+  }
+  if (event === "done") {
+    return "Debate run completed";
+  }
+  if (event === "error") {
+    return typeof data.message === "string" ? data.message : "Run failed";
+  }
+  return event.replaceAll("_", " ");
+}
+
+function buildTraceEntry(event: string, data: TraceAwarePayload, trace: TraceMeta): TraceEntry {
+  return {
+    id: `${trace.trace_id}-${trace.event_seq}`,
+    event,
+    session_id: typeof data.session_id === "string" ? data.session_id : undefined,
+    trace,
+    summary: summarizeTraceEvent(event, data),
+  };
+}
+
 export function useDebate() {
   const abortRef = useRef<AbortController | null>(null);
   const apiBaseRef = useRef(DEFAULT_API_BASE);
   const phase3SupportRef = useRef<boolean | null>(null);
 
   const fetchReport = useCallback(async (reportPath: string) => {
+    if (!reportPath.trim()) {
+      return;
+    }
     const url = `${apiBaseRef.current}/api/debate/report?path=${encodeURIComponent(reportPath)}`;
     const resp = await fetch(url);
     if (!resp.ok) return;
@@ -96,51 +143,63 @@ export function useDebate() {
   const handleMessage = useCallback(
     async (msg: MessageEvent) => {
       if (!msg.event) return;
+      const data = (msg.data ? (JSON.parse(msg.data) as TraceAwarePayload) : {}) as TraceAwarePayload;
+      const trace = data._trace;
 
-      if (msg.event === "phase") {
-        const data = JSON.parse(msg.data) as PhasePayload;
-        if (data.session_id) {
+      if (trace) {
+        useDebateStore.getState().addTraceEntry(buildTraceEntry(msg.event, data, trace));
+        if (typeof data.session_id === "string") {
           useDebateStore.getState().setSessionId(data.session_id);
         }
-        useDebateStore.getState().setPhase(data.phase, data.title, data.detail || "");
+        if (typeof trace.journal_path === "string" && trace.journal_path) {
+          useDebateStore.getState().setTraceJournalPath(trace.journal_path);
+        }
+      }
+
+      if (msg.event === "phase") {
+        const phaseData = data as PhasePayload;
+        if (phaseData.session_id) {
+          useDebateStore.getState().setSessionId(phaseData.session_id);
+        }
+        useDebateStore.getState().setPhase(phaseData.phase, phaseData.title, phaseData.detail || "");
         return;
       }
 
       if (msg.event === "host_research") {
-        const data = JSON.parse(msg.data) as { chunk: string; session_id: string };
-        useDebateStore.getState().appendHostResearch(data.chunk);
-        if (data.session_id) {
-          useDebateStore.getState().setSessionId(data.session_id);
+        const researchData = data as { chunk: string; session_id: string };
+        useDebateStore.getState().appendHostResearch(researchData.chunk);
+        if (researchData.session_id) {
+          useDebateStore.getState().setSessionId(researchData.session_id);
         }
         return;
       }
 
       if (msg.event === "focus_options_ready") {
-        const data = JSON.parse(msg.data) as {
+        const focusData = data as {
           session_id: string;
           focus_options: FocusOption[];
         };
-        useDebateStore.getState().setFocusOptions(data.session_id, data.focus_options);
+        useDebateStore.getState().setFocusOptions(focusData.session_id, focusData.focus_options);
         return;
       }
 
       if (msg.event === "debaters_ready") {
-        const data = JSON.parse(msg.data) as {
+        const debaterData = data as {
           session_id: string;
           debaters: DebaterConfig[];
           deadline_at?: string | null;
         };
         useDebateStore.getState().setDebaters(
-          data.session_id,
-          data.debaters,
-          data.deadline_at ? Date.parse(data.deadline_at) : null,
+          debaterData.session_id,
+          debaterData.debaters,
+          debaterData.deadline_at ? Date.parse(debaterData.deadline_at) : null,
         );
         return;
       }
 
       if (msg.event === "background_ready") {
-        const data = JSON.parse(msg.data) as { background_path: string };
-        const imageUrl = resolveImageUrl(apiBaseRef.current, data.background_path);
+        const bgData = data as { background_path: string };
+        const imageUrl = resolveImageUrl(apiBaseRef.current, bgData.background_path);
         if (imageUrl) {
           useDebateStore.getState().setBackgroundImage(imageUrl);
         }
@@ -148,9 +207,9 @@ export function useDebate() {
       }
 
       if (msg.event === "avatars_ready") {
-        const data = JSON.parse(msg.data) as { avatars: Record<string, string> };
+        const avatarData = data as { avatars: Record<string, string> };
         const avatars: Record<string, string> = {};
-        Object.entries(data.avatars).forEach(([name, path]) => {
+        Object.entries(avatarData.avatars).forEach(([name, path]) => {
           const imageUrl = resolveImageUrl(apiBaseRef.current, path);
           if (imageUrl) {
             avatars[name] = imageUrl;
@@ -161,7 +220,7 @@ export function useDebate() {
       }
 
       if (msg.event === "debate_token") {
-        const data = JSON.parse(msg.data) as {
+        const tokenData = data as {
           session_id: string;
           speaker: string;
           turn_id: number;
@@ -169,25 +228,41 @@ export function useDebate() {
           stage?: "opening" | "free_debate" | "closing" | "summary";
         };
         useDebateStore.getState().appendToken(
-          data.session_id,
-          data.speaker,
-          data.turn_id,
-          data.token,
-          data.stage,
+          tokenData.session_id,
+          tokenData.speaker,
+          tokenData.turn_id,
+          tokenData.token,
+          tokenData.stage,
+        );
+        return;
+      }
+
+      if (msg.event === "debate_turn_start") {
+        const turnStartData = data as {
+          session_id: string;
+          speaker: string;
+          turn_id: number;
+          stage?: "opening" | "free_debate" | "closing" | "summary";
+        };
+        useDebateStore.getState().setPreparingTurn(
+          turnStartData.session_id,
+          turnStartData.speaker,
+          turnStartData.turn_id,
+          turnStartData.stage,
         );
         return;
       }
 
       if (msg.event === "stage_change") {
-        const data = JSON.parse(msg.data) as {
+        const stageData = data as {
           stage: "opening" | "free_debate" | "closing" | "summary";
         };
-        useDebateStore.getState().setStage(data.stage);
+        useDebateStore.getState().setStage(stageData.stage);
         return;
       }
 
       if (msg.event === "debate_turn_end") {
-        const data = JSON.parse(msg.data) as {
+        const turnEndData = data as {
           session_id: string;
           speaker: string;
           turn_id: number;
@@ -195,38 +270,48 @@ export function useDebate() {
           stage?: "opening" | "free_debate" | "closing" | "summary";
         };
         useDebateStore.getState().finalizeTurn(
-          data.session_id,
-          data.speaker,
-          data.turn_id,
-          data.full_content,
-          data.stage,
+          turnEndData.session_id,
+          turnEndData.speaker,
+          turnEndData.turn_id,
+          turnEndData.full_content,
+          turnEndData.stage,
         );
         return;
       }
 
       if (msg.event === "host_summary") {
-        const data = JSON.parse(msg.data) as { chunk: string };
-        useDebateStore.getState().appendHostSummary(data.chunk);
+        const summaryData = data as { chunk: string };
+        useDebateStore.getState().appendHostSummary(summaryData.chunk);
+        return;
+      }
+
+      if (msg.event === "structured_report") {
+        const reportData = data as { report: StructuredReport };
+        useDebateStore.getState().setStructuredReport(reportData.report);
         return;
       }
 
       if (msg.event === "done") {
-        const data = JSON.parse(msg.data) as {
+        const doneData = data as {
           session_id: string;
           report_path: string;
           summary_image_path?: string;
+          trace_journal_path?: string;
         };
-        const summaryImageUrl = resolveImageUrl(apiBaseRef.current, data.summary_image_path);
-        useDebateStore.getState().setDone(data.session_id, data.report_path, summaryImageUrl);
-        await fetchReport(data.report_path);
+        const summaryImageUrl = resolveImageUrl(apiBaseRef.current, doneData.summary_image_path);
+        useDebateStore.getState().setDone(doneData.session_id, doneData.report_path, summaryImageUrl);
+        if (doneData.trace_journal_path) {
+          useDebateStore.getState().setTraceJournalPath(doneData.trace_journal_path);
+        }
+        await fetchReport(doneData.report_path);
         abortRef.current?.abort();
         abortRef.current = null;
         return;
       }
 
       if (msg.event === "error") {
-        const data = JSON.parse(msg.data) as { message: string };
-        useDebateStore.getState().setError(data.message || "Unknown error");
+        const errorData = data as { message: string };
+        useDebateStore.getState().setError(errorData.message || "Unknown error");
         abortRef.current = null;
       }
     },
@@ -294,9 +379,6 @@ export function useDebate() {
         const store = useDebateStore.getState();
         const sessionId = store.sessionId;
         if (!sessionId) return;
-
-        abortRef.current?.abort();
-        abortRef.current = null;
 
         store.markStopRequested();
 

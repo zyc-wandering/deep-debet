@@ -27,3 +27,12 @@ def chunk_text(text: str, chunk_size: int = 28) -> Iterable[str]:
 def sse_event(event: str, data: Dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
+
+def with_trace_metadata(data: Dict) -> Dict:
+    from app.utils.logger import debate_logger
+
+    payload = dict(data)
+    trace = {key: value for key, value in debate_logger.current_trace_context().items() if value is not None}
+    if trace:
+        payload["_trace"] = trace
+    return payload

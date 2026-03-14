@@ -1,5 +1,6 @@
 import json
 from datetime import timedelta
+from pathlib import Path
 
 import pytest
 
@@ -123,6 +124,7 @@ async def test_closing_stage_emits_stage_change_without_model_init_error(tmp_pat
             store.update(session)
 
     # Verify that the stage executor produced the expected events
+    assert len([e for e in events if e.event == "debate_turn_start"]) == 2
     assert len([e for e in events if e.event == "debate_token"]) > 0
     assert len([e for e in events if e.event == "debate_turn_end"]) == 2
 
@@ -257,11 +259,57 @@ async def test_configure_sets_deadline_persists_config_and_finishes_run(monkeypa
     }
     assert any(event.event == "debaters_ready" for event in configure_events)
     assert configure_events[-1].event == "done"
+    assert session.report_path is not None
+    assert list((tmp_path / "reports").glob("*.md"))
 
     persisted = json.loads((tmp_path / "sessions" / f"{session_id}.json").read_text(encoding="utf-8"))
     assert persisted["pre_debate_config"]["selected_focus_id"] == "focus-growth"
     assert persisted["pre_debate_config"]["intensity"] == "intense"
     assert persisted["pre_debate_config"]["user_context"] == "I already have one offer in hand."
+
+
+@pytest.mark.anyio
+async def test_execute_debate_stages_still_runs_summary_after_stop_requested(monkeypatch, tmp_path):
+    orchestrator = make_orchestrator(tmp_path)
+    session = DebateSession(
+        topic="Should I change jobs?",
+        max_turns=4,
+        stop_requested=True,
+    )
+
+    async def fake_structured_summary(self, topic: str, brief: str, messages, references):
+        return StructuredReport(
+            background_summary="background",
+            synthesis="synthesis",
+            host_conclusion="host conclusion",
+        )
+
+    async def fake_markdown_summary(self, topic: str, brief: str, messages, references):
+        return "# report"
+
+    monkeypatch.setattr(HostAgent, "summarize_debate_structured", fake_structured_summary)
+    monkeypatch.setattr(HostAgent, "summarize_debate", fake_markdown_summary)
+
+    events = []
+    async for event in orchestrator._execute_debate_stages(
+        session=session,
+        debater_agents=[],
+        topic=session.topic,
+        brief="brief",
+        intensity="balanced",
+        selected_focus=None,
+        user_context="",
+        max_turns=session.max_turns,
+        enable_search=False,
+    ):
+        events.append(event)
+
+    assert any(event.event == "host_summary" for event in events)
+    assert any(event.event == "structured_report" for event in events)
+    assert session.report_path is not None
+    report_path = tmp_path / "reports" / Path(session.report_path).name
+    assert report_path.exists()
+    assert report_path.read_text(encoding="utf-8") == "# report"
 
 
 # ============== Stage Extensibility Tests ==============

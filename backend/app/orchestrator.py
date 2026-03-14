@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta
+from datetime import timedelta, timezone
 from time import monotonic
 from typing import AsyncGenerator, List, Optional
 
@@ -34,7 +34,8 @@ from app.stage import (
 from app.stage.base import StageContext
 from app.storage.report_writer import ReportWriter
 from app.storage.session_store import SessionStore
-from app.utils.formatting import chunk_text
+from app.utils.formatting import chunk_text, with_trace_metadata
+from app.utils.logger import debate_logger
 
 
 class DebateOrchestrator:
@@ -86,6 +87,7 @@ class DebateOrchestrator:
 
     async def start(self, request: DebateStartRequest) -> AsyncGenerator[SSEEvent, None]:
         """Start a session and stop after host research plus focus selection."""
+        start_time = monotonic()
         host = HostAgent(self.llm, self.search, debate_language=request.debate_language)
         session = DebateSession(
             topic=request.topic,
@@ -100,190 +102,339 @@ class DebateOrchestrator:
         )
         self.session_store.create(session)
 
-        try:
-            yield self._phase_event(
-                session.session_id,
-                "booting",
-                "Topic received",
-                "Initializing host workspace and debate session.",
-            )
-            yield self._phase_event(
-                session.session_id,
-                "researching",
-                "Researching",
-                "The host is gathering background, conflict lines, and validation signals.",
+        # 初始化日志上下文
+        with debate_logger.session_context(session.session_id, session.trace_id):
+            debate_logger.session_created(
+                session_id=session.session_id,
+                topic=request.topic,
+                config={
+                    "model_variant": request.model_variant.value,
+                    "debater_count": request.debater_count,
+                    "time_limit_sec": request.time_limit_sec,
+                    "max_turns": request.max_turns,
+                    "enable_debater_search": request.enable_debater_search,
+                    "fun_mode": request.fun_mode,
+                    "language": request.debate_language.value,
+                }
             )
 
-            brief, references = await host.research_topic(request.topic)
-            session.brief = brief
-            session.research_references = references
-            self.session_store.update(session)
+            try:
+                yield self._phase_event(
+                    session.session_id,
+                    "booting",
+                    "Topic received",
+                    "Initializing host workspace and debate session.",
+                )
+                yield self._phase_event(
+                    session.session_id,
+                    "researching",
+                    "Researching",
+                    "The host is gathering background, conflict lines, and validation signals.",
+                )
 
-            for chunk in chunk_text(brief, chunk_size=36):
-                yield SSEEvent(event="host_research", data={"session_id": session.session_id, "chunk": chunk})
-                await asyncio.sleep(0.015)
+                debate_logger.info("Starting topic research", event_type="research_start", topic=request.topic)
+                research_start = monotonic()
+                with debate_logger.span_context("host:research"):
+                    brief, references = await host.research_topic(request.topic)
+                research_duration = monotonic() - research_start
+                debate_logger.info(
+                    "Topic research completed",
+                    event_type="research_complete",
+                    duration_sec=research_duration,
+                    brief_length=len(brief),
+                    reference_count=len(references),
+                )
+                session.brief = brief
+                session.research_references = references
+                self.session_store.update(session)
 
-            focus_options = await host.extract_focus_options(request.topic, brief)
-            session.focus_options = focus_options
-            session.state = SessionState.configuring
-            self.session_store.update(session)
+                for chunk in chunk_text(brief, chunk_size=36):
+                    yield SSEEvent(
+                        event="host_research",
+                        data=with_trace_metadata({"session_id": session.session_id, "chunk": chunk}),
+                    )
+                    await asyncio.sleep(0.015)
 
-            yield SSEEvent(
-                event="focus_options_ready",
-                data={
-                    "session_id": session.session_id,
-                    "focus_options": [option.model_dump() for option in focus_options],
-                },
-            )
-            yield self._phase_event(
-                session.session_id,
-                "configuring",
-                "Choose your focus",
-                "Select the discussion angle you care about more, then continue into the debate.",
-            )
-        except Exception as exc:
-            session.state = SessionState.error
-            session.error = str(exc)
-            self.session_store.update(session)
-            yield self._error_event(session.session_id, "start", str(exc))
+                debate_logger.info("Extracting focus options", event_type="focus_extraction_start")
+                focus_start = monotonic()
+                with debate_logger.span_context("host:focus_options"):
+                    focus_options = await host.extract_focus_options(request.topic, brief)
+                debate_logger.info(
+                    "Focus options extracted",
+                    event_type="focus_extraction_complete",
+                    duration_sec=monotonic() - focus_start,
+                    option_count=len(focus_options),
+                    options=[{"name": opt.name, "id": opt.id} for opt in focus_options],
+                )
+                session.focus_options = focus_options
+                session.state = SessionState.configuring
+                self.session_store.update(session)
+                debate_logger.session_state_changed(
+                    session.session_id,
+                    old_state=SessionState.running.value,
+                    new_state=SessionState.configuring.value,
+                    reason="Research complete, waiting for focus selection",
+                )
+
+                yield SSEEvent(
+                    event="focus_options_ready",
+                    data=with_trace_metadata({
+                        "session_id": session.session_id,
+                        "focus_options": [option.model_dump() for option in focus_options],
+                    }),
+                )
+                yield self._phase_event(
+                    session.session_id,
+                    "configuring",
+                    "Choose your focus",
+                    "Select the discussion angle you care about more, then continue into the debate.",
+                )
+            except Exception as exc:
+                session.state = SessionState.error
+                session.error = str(exc)
+                self.session_store.update(session)
+                debate_logger.session_state_changed(
+                    session.session_id,
+                    old_state=SessionState.running.value,
+                    new_state=SessionState.error.value,
+                    reason=f"Error during start: {str(exc)}",
+                )
+                debate_logger.exception(
+                    "Error in start phase",
+                    event_type="phase_error",
+                    phase="start",
+                    duration_sec=monotonic() - start_time,
+                )
+                yield self._error_event(session.session_id, "start", str(exc))
 
     async def configure(self, request: DebateConfigureRequest) -> AsyncGenerator[SSEEvent, None]:
         """Resume a researched session after the user submits focus, intensity, and context."""
         start_clock = monotonic()
         session = self.session_store.get(request.session_id)
         if not session:
+            debate_logger.error(
+                "Session not found in configure",
+                event_type="session_not_found",
+                session_id=request.session_id,
+            )
             yield self._error_event(request.session_id, "configure", "Session not found")
             return
-        host = HostAgent(self.llm, self.search, debate_language=session.debate_language)
 
-        selected_focus = self._get_focus_option(session, request.pre_debate_config.selected_focus_id)
-        if not selected_focus:
-            yield self._error_event(request.session_id, "configure", "Selected focus option is invalid")
-            return
-
-        session.pre_debate_config = request.pre_debate_config
-        session.state = SessionState.running
-        session.error = None
-        self.session_store.update(session)
-
-        try:
-            yield self._phase_event(
-                session.session_id,
-                "assembling",
-                "Assembling debaters",
-                "Generating personas, stances, and speaking styles for this configured run.",
-            )
-            debaters = await host.create_debaters(
-                topic=session.topic,
-                debater_count=session.debater_count,
-                brief=session.brief,
-                selected_focus=selected_focus,
+        # 初始化日志上下文
+        with debate_logger.session_context(session.session_id, session.trace_id):
+            debate_logger.info(
+                "Configure phase started",
+                event_type="configure_start",
+                session_id=session.session_id,
+                selected_focus_id=request.pre_debate_config.selected_focus_id,
                 intensity=request.pre_debate_config.intensity,
-                user_context=request.pre_debate_config.user_context,
             )
-            session.debaters = debaters
-            session.deadline_at = utc_now() + timedelta(seconds=session.time_limit_sec)
+
+            host = HostAgent(self.llm, self.search, debate_language=session.debate_language)
+
+            selected_focus = self._get_focus_option(session, request.pre_debate_config.selected_focus_id)
+            if not selected_focus:
+                debate_logger.error(
+                    "Invalid focus option selected",
+                    event_type="invalid_focus",
+                    selected_focus_id=request.pre_debate_config.selected_focus_id,
+                    valid_ids=[opt.id for opt in session.focus_options],
+                )
+                yield self._error_event(request.session_id, "configure", "Selected focus option is invalid")
+                return
+
+            session.pre_debate_config = request.pre_debate_config
+            session.state = SessionState.running
+            session.error = None
             self.session_store.update(session)
-
-            avatar_tasks = [
-                asyncio.create_task(self._generate_avatar_with_event(debater, session.session_id))
-                for debater in debaters
-            ]
-
-            yield SSEEvent(
-                event="debaters_ready",
-                data={
-                    "session_id": session.session_id,
-                    "debaters": [debater.model_dump() for debater in debaters],
-                    "topic": session.topic,
-                    "time_limit_sec": session.time_limit_sec,
-                    "max_turns": session.max_turns,
-                    "deadline_at": session.deadline_at.isoformat() if session.deadline_at else None,
-                },
-            )
-
-            yield self._phase_event(
+            debate_logger.session_state_changed(
                 session.session_id,
-                "generating_background",
-                "Generating background",
-                "Preparing debate imagery for the configured session.",
+                old_state=SessionState.configuring.value,
+                new_state=SessionState.running.value,
+                reason="Focus selected, starting debate",
             )
 
-            background_path = await self.image_service.generate_debate_background(
-                session.topic,
-                [debater.model_dump() for debater in debaters],
-                session.session_id,
-            )
-            if background_path:
+            try:
+                yield self._phase_event(
+                    session.session_id,
+                    "assembling",
+                    "Assembling debaters",
+                    "Generating personas, stances, and speaking styles for this configured run.",
+                )
+                debate_logger.info("Creating debaters", event_type="create_debaters_start")
+                debater_start = monotonic()
+                with debate_logger.span_context("host:create_debaters"):
+                    debaters = await host.create_debaters(
+                        topic=session.topic,
+                        debater_count=session.debater_count,
+                        brief=session.brief,
+                        selected_focus=selected_focus,
+                        intensity=request.pre_debate_config.intensity,
+                        user_context=request.pre_debate_config.user_context,
+                    )
+                debate_logger.info(
+                    "Debaters created",
+                    event_type="create_debaters_complete",
+                    duration_sec=monotonic() - debater_start,
+                    debater_count=len(debaters),
+                    debater_names=[d.name for d in debaters],
+                )
+                session.debaters = debaters
+                session.deadline_at = utc_now() + timedelta(seconds=session.time_limit_sec)
+                self.session_store.update(session)
+
+                avatar_tasks = [
+                    asyncio.create_task(self._generate_avatar_with_event(debater, session.session_id))
+                    for debater in debaters
+                ]
+
                 yield SSEEvent(
-                    event="background_ready",
-                    data={"session_id": session.session_id, "background_path": background_path},
+                    event="debaters_ready",
+                    data=with_trace_metadata({
+                        "session_id": session.session_id,
+                        "debaters": [debater.model_dump() for debater in debaters],
+                        "topic": session.topic,
+                        "time_limit_sec": session.time_limit_sec,
+                        "max_turns": session.max_turns,
+                        "deadline_at": session.deadline_at.isoformat() if session.deadline_at else None,
+                    }),
                 )
 
-            avatar_results = await asyncio.gather(*avatar_tasks, return_exceptions=True)
-            avatars: dict[str, str] = {}
-            for index, result in enumerate(avatar_results):
-                if isinstance(result, str):
-                    avatars[debaters[index].name] = result
+                yield self._phase_event(
+                    session.session_id,
+                    "generating_background",
+                    "Generating background",
+                    "Preparing debate imagery for the configured session.",
+                )
 
-            yield SSEEvent(
-                event="avatars_ready",
-                data={"session_id": session.session_id, "avatars": avatars},
-            )
+                debate_logger.image_generation_request("background", {"topic": session.topic})
+                img_start = monotonic()
+                with debate_logger.span_context("image:background"):
+                    background_path = await self.image_service.generate_debate_background(
+                        session.topic,
+                        [debater.model_dump() for debater in debaters],
+                        session.session_id,
+                    )
+                debate_logger.image_generation_response(
+                    "background",
+                    duration_sec=monotonic() - img_start,
+                    success=background_path is not None,
+                    path=background_path,
+                )
+                if background_path:
+                    yield SSEEvent(
+                        event="background_ready",
+                        data=with_trace_metadata(
+                            {"session_id": session.session_id, "background_path": background_path}
+                        ),
+                    )
 
-            debater_agents = self._build_debater_agents(
-                debaters,
-                debate_language=session.debate_language,
-            )
-            user_context = request.pre_debate_config.user_context
-            intensity = request.pre_debate_config.intensity
+                avatar_results = await asyncio.gather(*avatar_tasks, return_exceptions=True)
+                avatars: dict[str, str] = {}
+                for index, result in enumerate(avatar_results):
+                    if isinstance(result, str):
+                        avatars[debaters[index].name] = result
 
-            # Execute debate stages using the stage pipeline
-            async for event in self._execute_debate_stages(
-                session=session,
-                debater_agents=debater_agents,
-                topic=session.topic,
-                brief=session.brief,
-                intensity=intensity,
-                selected_focus=selected_focus,
-                user_context=user_context,
-                max_turns=session.max_turns,
-                enable_search=session.enable_debater_search,
-            ):
-                yield event
+                yield SSEEvent(
+                    event="avatars_ready",
+                    data=with_trace_metadata({"session_id": session.session_id, "avatars": avatars}),
+                )
 
-            # Generate summary image
-            yield self._phase_event(
-                session.session_id,
-                "generating_summary_image",
-                "Generating summary image",
-                "Rendering the final visual summary.",
-            )
-            summary_image_path = await self.image_service.generate_summary_image(
-                session.topic,
-                [debater.model_dump() for debater in debaters],
-                session.session_id,
-            )
+                debater_agents = self._build_debater_agents(
+                    debaters,
+                    debate_language=session.debate_language,
+                )
+                user_context = request.pre_debate_config.user_context
+                intensity = request.pre_debate_config.intensity
 
-            duration_sec = int(monotonic() - start_clock)
-            session.state = SessionState.done if not session.stop_requested else SessionState.stopped
-            self.session_store.update(session)
+                # Execute debate stages using the stage pipeline
+                debate_logger.info(
+                    "Starting debate stages",
+                    event_type="debate_stages_start",
+                    stages=["opening", "free_debate", "closing", "summarizing"],
+                )
+                async for event in self._execute_debate_stages(
+                    session=session,
+                    debater_agents=debater_agents,
+                    topic=session.topic,
+                    brief=session.brief,
+                    intensity=intensity,
+                    selected_focus=selected_focus,
+                    user_context=user_context,
+                    max_turns=session.max_turns,
+                    enable_search=session.enable_debater_search,
+                ):
+                    yield event
 
-            yield SSEEvent(
-                event="done",
-                data={
-                    "session_id": session.session_id,
-                    "report_path": str(session.report_path) if session.report_path else "",
-                    "summary_image_path": summary_image_path,
-                    "total_turns": len(session.messages),
-                    "duration_sec": duration_sec,
-                },
-            )
-        except Exception as exc:
-            session.state = SessionState.error
-            session.error = str(exc)
-            self.session_store.update(session)
-            yield self._error_event(session.session_id, "configure", str(exc))
+                # Generate summary image
+                yield self._phase_event(
+                    session.session_id,
+                    "generating_summary_image",
+                    "Generating summary image",
+                    "Rendering the final visual summary.",
+                )
+                debate_logger.image_generation_request("summary", {"topic": session.topic})
+                img_start = monotonic()
+                with debate_logger.span_context("image:summary"):
+                    summary_image_path = await self.image_service.generate_summary_image(
+                        session.topic,
+                        [debater.model_dump() for debater in debaters],
+                        session.session_id,
+                    )
+                debate_logger.image_generation_response(
+                    "summary",
+                    duration_sec=monotonic() - img_start,
+                    success=summary_image_path is not None,
+                    path=summary_image_path,
+                )
+
+                duration_sec = int(monotonic() - start_clock)
+                final_state = SessionState.done if not session.stop_requested else SessionState.stopped
+                old_state = session.state
+                session.state = final_state
+                self.session_store.update(session)
+                debate_logger.session_state_changed(
+                    session.session_id,
+                    old_state=old_state.value,
+                    new_state=final_state.value,
+                    reason="Debate completed" if final_state == SessionState.done else "Debate stopped",
+                )
+                debate_logger.report_generated(
+                    session_id=session.session_id,
+                    path=str(session.report_path) if session.report_path else "",
+                    duration_sec=duration_sec,
+                    total_turns=len(session.messages),
+                )
+
+                yield SSEEvent(
+                    event="done",
+                    data=with_trace_metadata({
+                        "session_id": session.session_id,
+                        "report_path": str(session.report_path) if session.report_path else "",
+                        "summary_image_path": summary_image_path,
+                        "total_turns": len(session.messages),
+                        "duration_sec": duration_sec,
+                        "trace_journal_path": session.trace_journal_path,
+                    }),
+                )
+            except Exception as exc:
+                old_state = session.state
+                session.state = SessionState.error
+                session.error = str(exc)
+                self.session_store.update(session)
+                debate_logger.session_state_changed(
+                    session.session_id,
+                    old_state=old_state.value,
+                    new_state=SessionState.error.value,
+                    reason=f"Error during configure: {str(exc)}",
+                )
+                debate_logger.exception(
+                    "Error in configure phase",
+                    event_type="phase_error",
+                    phase="configure",
+                    duration_sec=monotonic() - start_clock,
+                )
+                yield self._error_event(session.session_id, "configure", str(exc))
 
     async def _execute_debate_stages(
         self,
@@ -298,6 +449,14 @@ class DebateOrchestrator:
         enable_search: bool,
     ) -> AsyncGenerator[SSEEvent, None]:
         """Execute debate stages using the stage pipeline."""
+        stages_start = monotonic()
+        debate_logger.info(
+            "Executing debate stages",
+            event_type="execute_stages_start",
+            session_id=session.session_id,
+            stages=["opening", "free_debate", "closing", "summarizing"],
+            max_turns=max_turns,
+        )
 
         # Create stage pipeline
         stage_pipeline = self.stage_registry.create_pipeline([
@@ -317,8 +476,15 @@ class DebateOrchestrator:
 
         for stage_executor in stage_pipeline:
             if session.stop_requested or self._deadline_passed(session):
+                debate_logger.info(
+                    "Stage execution interrupted",
+                    event_type="stages_interrupted",
+                    session_id=session.session_id,
+                    reason="stop_requested" if session.stop_requested else "deadline_passed",
+                )
                 break
 
+            stage_start = monotonic()
             async for event in self._execute_stage(
                 stage_executor=stage_executor,
                 session=session,
@@ -332,23 +498,51 @@ class DebateOrchestrator:
             ):
                 yield event
 
+            debate_logger.info(
+                f"Stage completed: {stage_executor.stage_type}",
+                event_type="stage_pipeline_complete",
+                session_id=session.session_id,
+                stage=stage_executor.stage_type,
+                duration_sec=monotonic() - stage_start,
+                turn_count=len(session.messages) - turn_id,
+            )
             turn_id = len(session.messages)
 
-        # Execute summary stage separately as it requires different dependencies
-        if not session.stop_requested and not self._deadline_passed(session):
-            summary_stage = SummaryStageExecutor(self.llm, self.search, self.report_writer)
-            async for event in self._execute_stage(
-                stage_executor=summary_stage,
-                session=session,
-                debater_agents=debater_agents,
-                turn_id=turn_id,
-                topic=topic,
-                brief=brief,
-                intensity=intensity,
-                selected_focus=selected_focus,
-                user_context=user_context,
-            ):
-                yield event
+        # Always execute the summary stage so early stop / timeout still produces a report.
+        debate_logger.info(
+            "Starting summary stage",
+            event_type="summary_stage_start",
+            session_id=session.session_id,
+            total_messages=len(session.messages),
+        )
+        summary_start = monotonic()
+        summary_stage = SummaryStageExecutor(self.llm, self.search, self.report_writer)
+        async for event in self._execute_stage(
+            stage_executor=summary_stage,
+            session=session,
+            debater_agents=debater_agents,
+            turn_id=turn_id,
+            topic=topic,
+            brief=brief,
+            intensity=intensity,
+            selected_focus=selected_focus,
+            user_context=user_context,
+        ):
+            yield event
+        debate_logger.info(
+            "Summary stage completed",
+            event_type="summary_stage_complete",
+            session_id=session.session_id,
+            duration_sec=monotonic() - summary_start,
+        )
+
+        debate_logger.info(
+            "All debate stages completed",
+            event_type="execute_stages_complete",
+            session_id=session.session_id,
+            total_duration_sec=monotonic() - stages_start,
+            total_turns=len(session.messages),
+        )
 
     async def _execute_stage(
         self,
@@ -363,48 +557,72 @@ class DebateOrchestrator:
         user_context: str,
     ) -> AsyncGenerator[SSEEvent, None]:
         """Execute a single debate stage."""
+        stage_start = monotonic()
+        stage_type_str = stage_executor.stage_type if hasattr(stage_executor, 'stage_type') else "unknown"
 
-        # Update session stage
-        if hasattr(stage_executor, 'stage_type'):
-            stage_type = stage_executor.stage_type
-            if stage_type == "opening":
-                session.current_stage = DebateStage.opening
-            elif stage_type == "free_debate":
-                session.current_stage = DebateStage.free_debate
-            elif stage_type == "closing":
-                session.current_stage = DebateStage.closing
-            elif stage_type == "summarizing":
-                session.current_stage = DebateStage.summary
-            self.session_store.update(session)
+        with debate_logger.stage_context(stage_type_str):
+            debate_logger.stage_start(
+                stage=stage_type_str,
+                turn_id=turn_id,
+                extra={"stage_name": stage_executor.stage_name},
+            )
 
-        # Yield phase and stage change events
-        yield self._phase_event(
-            session.session_id,
-            stage_executor.stage_type,
-            stage_executor.stage_name,
-            stage_executor.stage_description,
-        )
-        yield self._stage_change_event(
-            session.session_id,
-            stage_executor.stage_type,
-            stage_executor.stage_name,
-        )
+            # Update session stage
+            if hasattr(stage_executor, 'stage_type'):
+                stage_type = stage_executor.stage_type
+                if stage_type == "opening":
+                    session.current_stage = DebateStage.opening
+                elif stage_type == "free_debate":
+                    session.current_stage = DebateStage.free_debate
+                elif stage_type == "closing":
+                    session.current_stage = DebateStage.closing
+                elif stage_type == "summarizing":
+                    session.current_stage = DebateStage.summary
+                self.session_store.update(session)
 
-        # Create stage context
-        ctx = StageContext(
-            session=session,
-            debater_agents=debater_agents,
-            topic=topic,
-            brief=brief,
-            intensity=intensity,
-            selected_focus=selected_focus,
-            user_context=user_context,
-            start_turn_id=turn_id,
-        )
+            # Yield phase and stage change events
+            yield self._phase_event(
+                session.session_id,
+                stage_executor.stage_type,
+                stage_executor.stage_name,
+                stage_executor.stage_description,
+            )
+            yield self._stage_change_event(
+                session.session_id,
+                stage_executor.stage_type,
+                stage_executor.stage_name,
+            )
 
-        # Execute the stage
-        async for event in stage_executor.execute(ctx):
-            yield event
+            # Create stage context
+            ctx = StageContext(
+                session=session,
+                debater_agents=debater_agents,
+                topic=topic,
+                brief=brief,
+                intensity=intensity,
+                selected_focus=selected_focus,
+                user_context=user_context,
+                start_turn_id=turn_id,
+            )
+
+            # Execute the stage
+            try:
+                async for event in stage_executor.execute(ctx):
+                    yield event
+            except Exception as exc:
+                debate_logger.exception(
+                    f"Stage execution failed: {stage_type_str}",
+                    event_type="stage_error",
+                    stage=stage_type_str,
+                    duration_sec=monotonic() - stage_start,
+                )
+                raise
+
+            debate_logger.stage_end(
+                stage=stage_type_str,
+                duration_sec=monotonic() - stage_start,
+                turn_count=len(session.messages) - turn_id,
+            )
 
     async def follow_up(
         self,
@@ -415,46 +633,94 @@ class DebateOrchestrator:
         """Post-debate follow-up Q&A with host or specific debater."""
         session = self.session_store.get(session_id)
         if not session:
-            yield SSEEvent(event="error", data={"session_id": session_id, "message": "Session not found"})
-            return
-
-        if session.state not in (SessionState.done, SessionState.stopped):
+            debate_logger.error(
+                "Follow-up: Session not found",
+                event_type="follow_up_error",
+                session_id=session_id,
+                error="Session not found",
+            )
             yield SSEEvent(
                 event="error",
-                data={"session_id": session_id, "message": "Debate not yet complete"},
+                data=with_trace_metadata({"session_id": session_id, "message": "Session not found"}),
             )
             return
 
-        follow_up = FollowUpMessage(target_role=target_role, question=question)
-        session.follow_up_messages.append(follow_up)
-        self.session_store.update(session)
-
-        if target_role == "host":
-            async for event in self._follow_up_host(session, follow_up):
-                yield event
-        else:
-            debater_agent = None
-            for debater in session.debaters:
-                if debater.name == target_role:
-                    debater_agent = DebaterAgent(
-                        config=debater,
-                        llm=self.llm,
-                        search=self.search,
-                        context_manager=ContextManager(),
-                        debate_language=session.debate_language,
-                    )
-                    break
-
-            if debater_agent:
-                async for event in self._follow_up_debater(session, debater_agent, follow_up):
-                    yield event
-            else:
+        with debate_logger.session_context(session.session_id, session.trace_id):
+            if session.state not in (SessionState.done, SessionState.stopped):
+                debate_logger.warning(
+                    "Follow-up: Debate not complete",
+                    event_type="follow_up_error",
+                    session_id=session_id,
+                    error="Debate not yet complete",
+                    current_state=session.state.value,
+                )
                 yield SSEEvent(
                     event="error",
-                    data={"session_id": session_id, "message": f"Debater {target_role} not found"},
+                    data=with_trace_metadata({"session_id": session_id, "message": "Debate not yet complete"}),
                 )
+                return
 
-        self.session_store.update(session)
+            debate_logger.follow_up_request(session_id, target_role, question)
+            follow_up = FollowUpMessage(target_role=target_role, question=question)
+            session.follow_up_messages.append(follow_up)
+            self.session_store.update(session)
+
+            follow_up_start = monotonic()
+            try:
+                if target_role == "host":
+                    with debate_logger.span_context("follow_up:host"):
+                        async for event in self._follow_up_host(session, follow_up):
+                            yield event
+                else:
+                    debater_agent = None
+                    for debater in session.debaters:
+                        if debater.name == target_role:
+                            debater_agent = DebaterAgent(
+                                config=debater,
+                                llm=self.llm,
+                                search=self.search,
+                                context_manager=ContextManager(),
+                                debate_language=session.debate_language,
+                            )
+                            break
+
+                    if debater_agent:
+                        with debate_logger.span_context(f"follow_up:{target_role}"):
+                            async for event in self._follow_up_debater(session, debater_agent, follow_up):
+                                yield event
+                    else:
+                        debate_logger.error(
+                            "Follow-up: Debater not found",
+                            event_type="follow_up_error",
+                            session_id=session_id,
+                            target_role=target_role,
+                            error=f"Debater {target_role} not found",
+                        )
+                        yield SSEEvent(
+                            event="error",
+                            data=with_trace_metadata(
+                                {"session_id": session_id, "message": f"Debater {target_role} not found"}
+                            ),
+                        )
+
+                debate_logger.info(
+                    "Follow-up completed",
+                    event_type="follow_up_complete",
+                    session_id=session_id,
+                    target_role=target_role,
+                    duration_sec=monotonic() - follow_up_start,
+                )
+            except Exception as exc:
+                debate_logger.exception(
+                    "Follow-up failed",
+                    event_type="follow_up_error",
+                    session_id=session_id,
+                    target_role=target_role,
+                    duration_sec=monotonic() - follow_up_start,
+                )
+                raise
+
+            self.session_store.update(session)
 
     async def _follow_up_host(
         self,
@@ -474,23 +740,23 @@ class DebateOrchestrator:
             response_parts.append(token)
             yield SSEEvent(
                 event="follow_up_token",
-                data={
+                data=with_trace_metadata({
                     "session_id": session.session_id,
                     "follow_up_id": follow_up.id,
                     "target_role": "host",
                     "token": token,
-                },
+                }),
             )
 
         follow_up.response = "".join(response_parts)
         yield SSEEvent(
             event="follow_up_end",
-            data={
+            data=with_trace_metadata({
                 "session_id": session.session_id,
                 "follow_up_id": follow_up.id,
                 "target_role": "host",
                 "full_response": follow_up.response,
-            },
+            }),
         )
 
     async def _follow_up_debater(
@@ -510,33 +776,54 @@ class DebateOrchestrator:
             response_parts.append(token)
             yield SSEEvent(
                 event="follow_up_token",
-                data={
+                data=with_trace_metadata({
                     "session_id": session.session_id,
                     "follow_up_id": follow_up.id,
                     "target_role": agent.config.name,
                     "token": token,
-                },
+                }),
             )
 
         follow_up.response = "".join(response_parts)
         yield SSEEvent(
             event="follow_up_end",
-            data={
+            data=with_trace_metadata({
                 "session_id": session.session_id,
                 "follow_up_id": follow_up.id,
                 "target_role": agent.config.name,
                 "full_response": follow_up.response,
-            },
+            }),
         )
 
     async def _generate_avatar_with_event(self, debater: DebaterConfig, session_id: str) -> str | None:
         """Generate avatar for a debater."""
+        debate_logger.image_generation_request(
+            "avatar",
+            {"debater_name": debater.name, "session_id": session_id},
+        )
+        start = monotonic()
         try:
-            return await self.image_service.generate_debater_avatar(debater.model_dump(), session_id)
+            path = await self.image_service.generate_debater_avatar(debater.model_dump(), session_id)
+            debate_logger.image_generation_response(
+                "avatar",
+                duration_sec=monotonic() - start,
+                success=True,
+                path=path,
+            )
+            return path
         except Exception as exc:
-            import logging
-
-            logging.getLogger(__name__).warning("Failed to generate avatar for %s: %s", debater.name, exc)
+            debate_logger.image_generation_response(
+                "avatar",
+                duration_sec=monotonic() - start,
+                success=False,
+                error=str(exc),
+            )
+            debate_logger.warning(
+                "Failed to generate avatar",
+                event_type="avatar_generation_failed",
+                debater_name=debater.name,
+                error=str(exc),
+            )
             return None
 
     def _build_debater_agents(
@@ -571,19 +858,21 @@ class DebateOrchestrator:
         """Create a phase event."""
         return SSEEvent(
             event="phase",
-            data={"session_id": session_id, "phase": phase, "title": title, "detail": detail},
+            data=with_trace_metadata({"session_id": session_id, "phase": phase, "title": title, "detail": detail}),
         )
 
     def _stage_change_event(self, session_id: str, stage: str, title: str) -> SSEEvent:
         """Create a stage change event."""
         return SSEEvent(
             event="stage_change",
-            data={"session_id": session_id, "stage": stage, "title": title},
+            data=with_trace_metadata({"session_id": session_id, "stage": stage, "title": title}),
         )
 
     def _error_event(self, session_id: str, stage: str, message: str) -> SSEEvent:
         """Create an error event."""
         return SSEEvent(
             event="error",
-            data={"session_id": session_id, "stage": stage, "message": message, "retrying": False},
+            data=with_trace_metadata(
+                {"session_id": session_id, "stage": stage, "message": message, "retrying": False}
+            ),
         )

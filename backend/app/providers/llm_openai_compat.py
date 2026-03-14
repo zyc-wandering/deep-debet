@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+from time import monotonic
 from typing import Any, AsyncGenerator, Dict, List
 
 import httpx
 
 from app.config import settings
 from app.providers.base import LLMProvider
+from app.utils.logger import debate_logger
 
 
 class OpenAICompatProvider(LLMProvider):
@@ -34,8 +36,18 @@ class OpenAICompatProvider(LLMProvider):
         user_prompt: str,
     ) -> AsyncGenerator[str, None]:
         """Stream chat completion from LLM, yielding tokens as they arrive."""
+        stream_start = monotonic()
         if not self.enabled:
             raise RuntimeError("OPENAI_API_KEY is missing")
+
+        debate_logger.debug(
+            "Provider chat_stream request",
+            event_type="provider_llm_stream_request",
+            model=self.model,
+            api_style=self.api_style,
+            prompt_length=len(user_prompt),
+            base_url=self.base_url,
+        )
 
         if self.api_style == "responses":
             async for token in self._responses_stream(system_prompt, user_prompt):
@@ -72,6 +84,7 @@ class OpenAICompatProvider(LLMProvider):
                         f"LLM stream request failed with status {response.status_code}: {detail_text[:500]}"
                     ) from exc
 
+                token_count = 0
                 async for line in response.aiter_lines():
                     line = line.strip()
                     if not line or line.startswith(":"):
@@ -85,11 +98,21 @@ class OpenAICompatProvider(LLMProvider):
                             delta = chunk.get("choices", [{}])[0].get("delta", {})
                             content = delta.get("content", "")
                             if content:
+                                token_count += 1
                                 yield content
                         except json.JSONDecodeError:
                             continue
 
+                debate_logger.debug(
+                    "Provider chat_stream completed",
+                    event_type="provider_llm_stream_complete",
+                    model=self.model,
+                    token_count=token_count,
+                    duration_sec=monotonic() - stream_start,
+                )
+
     async def chat(self, system_prompt: str, user_prompt: str) -> str:
+        chat_start = monotonic()
         if not self.enabled:
             raise RuntimeError("OPENAI_API_KEY is missing")
 
@@ -145,6 +168,15 @@ class OpenAICompatProvider(LLMProvider):
         if isinstance(content, list):
             parts = [part.get("text", "") for part in content if isinstance(part, dict)]
             content = "".join(parts)
+
+        duration = monotonic() - chat_start
+        debate_logger.debug(
+            "Provider chat completed",
+            event_type="provider_llm_chat_complete",
+            model=self.model,
+            response_length=len(content),
+            duration_sec=duration,
+        )
         return str(content).strip()
 
     async def _responses_stream(

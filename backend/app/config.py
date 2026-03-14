@@ -71,6 +71,8 @@ class Settings:
     frontend_origin: str = os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")
 
     data_dir: Path = Path(os.getenv("DATA_DIR", "./data"))
+    logs_dir: Path = data_dir / "logs"
+    trace_dir: Path = data_dir / "traces"
     reports_dir: Path = data_dir / "reports"
     sessions_dir: Path = data_dir / "sessions"
 
@@ -96,7 +98,7 @@ class Settings:
     tavily_api_key: str = os.getenv("TAVILY_API_KEY", "") or _read_key_from_file("TAVILY_API_KEY")
 
     default_debater_count: int = int(os.getenv("DEFAULT_DEBATER_COUNT", "3"))
-    default_time_limit_sec: int = int(os.getenv("DEFAULT_TIME_LIMIT_SEC", "360"))
+    default_time_limit_sec: int = int(os.getenv("DEFAULT_TIME_LIMIT_SEC", "1800"))
     default_max_turns: int = int(os.getenv("DEFAULT_MAX_TURNS", "24"))
     default_enable_debater_search: bool = _bool_env("DEFAULT_ENABLE_DEBATER_SEARCH", False)
 
@@ -128,5 +130,7 @@ if not settings.openai_model:
 
 def ensure_directories() -> None:
     settings.data_dir.mkdir(parents=True, exist_ok=True)
+    settings.logs_dir.mkdir(parents=True, exist_ok=True)
+    settings.trace_dir.mkdir(parents=True, exist_ok=True)
     settings.reports_dir.mkdir(parents=True, exist_ok=True)
     settings.sessions_dir.mkdir(parents=True, exist_ok=True)

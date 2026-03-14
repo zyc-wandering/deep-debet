@@ -1,17 +1,19 @@
 from __future__ import annotations
 
+from time import monotonic
 from typing import AsyncGenerator
 
-from app.models import DebateStage, DebateMessage, SSEEvent
+from app.models import DebateMessage, DebateStage, SSEEvent
 from app.stage.base import DebateStageExecutor, StageContext
+from app.utils.formatting import with_trace_metadata
+from app.utils.logger import debate_logger
 
 
 class OpeningStageExecutor(DebateStageExecutor):
-    """开场陈述阶段：每个辩手独立进行开场陈述，互不可见"""
+    """Opening statements are generated independently to avoid cross-contamination."""
 
     def __init__(self, turn_executor=None) -> None:
-        # turn_executor 参数保留用于兼容性，但不再使用
-        pass
+        self._unused_turn_executor = turn_executor
 
     @property
     def stage_type(self) -> str:
@@ -26,50 +28,80 @@ class OpeningStageExecutor(DebateStageExecutor):
         return "Each debater establishes a starting position and analysis frame independently."
 
     async def execute(self, ctx: StageContext) -> AsyncGenerator[SSEEvent, None]:
-        """执行开场陈述阶段
-
-        关键设计：每个辩手的开场陈述是独立的，看不到其他辩手的开场陈述。
-        这样可以避免后面的辩手攻击前面的辩手，保证公平性。
-        所有开场陈述完成后，才一次性加入 session.messages。
-        """
+        stage_start = monotonic()
         stage = DebateStage.opening
         turn_id = ctx.start_turn_id
 
-        # 收集所有开场陈述，最后一次性加入 session
+        debate_logger.info(
+            "Opening stage started",
+            event_type="opening_stage_start",
+            session_id=ctx.session.session_id,
+            debater_count=len(ctx.debater_agents),
+        )
+
         opening_messages: list[DebateMessage] = []
 
         for agent in ctx.debater_agents:
             if ctx.session.stop_requested or self._deadline_passed(ctx):
                 break
 
-            # 开场陈述阶段，每个辩手只能看到之前的辩论历史（如果有）
-            # 看不到本轮其他辩手的开场陈述
             base_messages = list(ctx.session.messages)
+            content_parts: list[str] = []
+            turn_started_at = monotonic()
 
-            content_parts = []
-            async for token in agent.produce_turn_stream_stage(
-                topic=ctx.topic,
-                brief=ctx.brief,
-                messages=base_messages,  # 使用基础历史，不包含本轮开场陈述
-                stage=stage,
-                intensity=ctx.intensity,
-                enable_search=False,
-                selected_focus=ctx.selected_focus,
-                user_context=ctx.user_context,
-            ):
-                content_parts.append(token)
+            with debate_logger.span_context(f"turn:{stage.value}:{agent.config.name}:{turn_id}"):
+                debate_logger.turn_start(
+                    speaker=agent.config.name,
+                    turn_id=turn_id,
+                    stage=stage.value,
+                    extra={"visibility": "isolated_opening"},
+                )
                 yield SSEEvent(
-                    event="debate_token",
-                    data={
-                        "session_id": ctx.session.session_id,
-                        "speaker": agent.config.name,
-                        "turn_id": turn_id,
-                        "token": token,
-                        "stage": stage.value,
-                    },
+                    event="debate_turn_start",
+                    data=with_trace_metadata(
+                        {
+                            "session_id": ctx.session.session_id,
+                            "speaker": agent.config.name,
+                            "turn_id": turn_id,
+                            "stage": stage.value,
+                        }
+                    ),
                 )
 
-            content = "".join(content_parts)
+                async for token in agent.produce_turn_stream_stage(
+                    topic=ctx.topic,
+                    brief=ctx.brief,
+                    messages=base_messages,
+                    stage=stage,
+                    intensity=ctx.intensity,
+                    enable_search=False,
+                    selected_focus=ctx.selected_focus,
+                    user_context=ctx.user_context,
+                ):
+                    content_parts.append(token)
+                    yield SSEEvent(
+                        event="debate_token",
+                        data=with_trace_metadata(
+                            {
+                                "session_id": ctx.session.session_id,
+                                "speaker": agent.config.name,
+                                "turn_id": turn_id,
+                                "token": token,
+                                "stage": stage.value,
+                            }
+                        ),
+                    )
+
+                content = "".join(content_parts)
+                debate_logger.turn_end(
+                    speaker=agent.config.name,
+                    turn_id=turn_id,
+                    duration_sec=monotonic() - turn_started_at,
+                    token_count=len(content_parts),
+                    content_length=len(content),
+                    extra={"visibility": "isolated_opening"},
+                )
+
             message = DebateMessage(
                 speaker=agent.config.name,
                 role="debater",
@@ -82,27 +114,36 @@ class OpeningStageExecutor(DebateStageExecutor):
 
             yield SSEEvent(
                 event="debate_turn_end",
-                data={
-                    "session_id": ctx.session.session_id,
-                    "speaker": agent.config.name,
-                    "turn_id": turn_id,
-                    "full_content": content,
-                    "citations": [],
-                    "stage": stage.value,
-                },
+                data=with_trace_metadata(
+                    {
+                        "session_id": ctx.session.session_id,
+                        "speaker": agent.config.name,
+                        "turn_id": turn_id,
+                        "full_content": content,
+                        "citations": [],
+                        "stage": stage.value,
+                    }
+                ),
             )
 
             turn_id += 1
 
-        # 所有辩手完成开场陈述后，一次性加入 session
         ctx.session.messages.extend(opening_messages)
         ctx.session.stage_transcript.setdefault(stage, []).extend(opening_messages)
 
+        debate_logger.info(
+            "Opening stage completed",
+            event_type="opening_stage_complete",
+            session_id=ctx.session.session_id,
+            duration_sec=monotonic() - stage_start,
+            total_turns=len(opening_messages),
+        )
+
     def should_advance(self, ctx: StageContext) -> bool:
-        """开场阶段：每个辩手发言一次后结束"""
         opening_messages = ctx.session.stage_transcript.get(DebateStage.opening, [])
         return len(opening_messages) >= len(ctx.debater_agents)
 
     def _deadline_passed(self, ctx: StageContext) -> bool:
         from app.models import utc_now
+
         return ctx.session.deadline_at is not None and utc_now() >= ctx.session.deadline_at

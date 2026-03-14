@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-import logging
+import json
+import re
 from typing import AsyncGenerator, List, Tuple
 
 from app.agents.context_manager import ContextManager
@@ -16,8 +17,15 @@ from app.prompts.debater import (
     build_stage_turn_instruction,
 )
 from app.providers.base import LLMProvider, SearchProvider
+from app.utils.logger import debate_logger
 
-logger = logging.getLogger(__name__)
+JSON_STYLE_QUOTES = str.maketrans({
+    "“": '"',
+    "”": '"',
+    "‘": "'",
+    "’": "'",
+    "：": ":",
+})
 
 
 class DebaterAgent:
@@ -48,7 +56,7 @@ class DebaterAgent:
     ) -> Tuple[str, List[SearchResult]]:
         references = await self._load_references(topic, enable_search)
         user_prompt = self._build_general_turn_prompt(brief, messages, references)
-        text = (await self.llm.chat(self._system_prompt(), user_prompt)).strip()
+        text = self._normalize_debate_output((await self.llm.chat(self._system_prompt(), user_prompt)).strip())
         if not text:
             raise ValueError(f"Empty debater response for {self.config.name}")
         return text, references
@@ -184,17 +192,81 @@ class DebaterAgent:
             language=self.debate_language,
         )
 
+    def _normalize_debate_output(self, text: str) -> str:
+        stripped = text.strip()
+        if not stripped:
+            return stripped
+
+        candidate = stripped
+        if "```" in candidate:
+            parts = candidate.split("```")
+            if len(parts) > 1:
+                candidate = parts[1]
+            if candidate.strip().startswith("json"):
+                candidate = candidate.strip()[4:]
+            candidate = candidate.strip()
+
+        normalized = candidate.translate(JSON_STYLE_QUOTES).strip()
+        try:
+            parsed = json.loads(normalized)
+            if isinstance(parsed, dict) and len(parsed) == 1:
+                value = next(iter(parsed.values()))
+                if isinstance(value, str):
+                    return value.strip()
+        except Exception:
+            pass
+
+        object_like = normalized.lstrip()
+        if object_like.startswith("{"):
+            body = object_like[1:]
+            colon_index = body.find(":")
+            if colon_index < 0:
+                return ""
+
+            value_part = body[colon_index + 1 :].lstrip()
+            if not value_part:
+                return ""
+            if value_part.startswith('"') or value_part.startswith("'"):
+                value_part = value_part[1:]
+            value_part = re.sub(r'["\']?\s*\}\s*$', "", value_part)
+            value_part = value_part.rstrip('}"\' \n\r\t')
+            value_part = value_part.lstrip()
+            return value_part
+
+        return stripped
+
+    def _stream_normalized_text(self, text: str, already_emitted: str) -> tuple[str, str]:
+        normalized = self._normalize_debate_output(text)
+        if normalized.startswith(already_emitted):
+            return normalized[len(already_emitted) :], normalized
+        return normalized, normalized
+
     async def _stream_or_chat(self, system_prompt: str, user_prompt: str) -> AsyncGenerator[str, None]:
         yielded = 0
+        raw_parts: list[str] = []
+        emitted_text = ""
         try:
             async for token in self.llm.chat_stream(system_prompt, user_prompt):
-                yielded += 1
-                yield token
+                raw_parts.append(token)
+                delta, emitted_text = self._stream_normalized_text("".join(raw_parts), emitted_text)
+                if delta:
+                    yielded += len(delta)
+                    yield delta
             if yielded == 0:
-                raise ValueError("Empty streamed response")
+                normalized = self._normalize_debate_output("".join(raw_parts))
+                if normalized:
+                    yielded += len(normalized)
+                    yield normalized
+                else:
+                    raise ValueError("Empty streamed response")
         except Exception as exc:
-            logger.warning("Debater stream fallback to non-stream chat for %s: %s", self.config.name, exc)
-            text = (await self.llm.chat(system_prompt, user_prompt)).strip()
+            debate_logger.warning(
+                "Debater stream fallback to non-stream chat",
+                event_type="debater_stream_fallback",
+                speaker=self.config.name,
+                error=str(exc),
+            )
+            text = self._normalize_debate_output((await self.llm.chat(system_prompt, user_prompt)).strip())
             if not text:
                 raise ValueError(f"Empty non-stream response for {self.config.name}") from exc
             for char in text:

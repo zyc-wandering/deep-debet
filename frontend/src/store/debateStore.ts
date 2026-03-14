@@ -9,6 +9,9 @@ import {
   DebateStage,
   FollowUpMessage,
   FocusOption,
+  PreparingTurn,
+  StructuredReport,
+  TraceEntry,
   WorkflowActivity,
 } from "../types";
 
@@ -30,13 +33,17 @@ interface DebateState {
   hostSummary: string;
   debaters: DebaterConfig[];
   lines: DebateLine[];
-  liveBuffers: Record<string, string>;
+  liveBuffers: Record<string, { content: string; stage?: DebateStage }>;
   reportPath: string;
+  traceJournalPath: string;
   reportMarkdown: string;
+  structuredReport: StructuredReport | null;
   errorMessage: string;
   activities: WorkflowActivity[];
+  traceEntries: TraceEntry[];
   activeSpeaker: string;
   activeTurnId: number | null;
+  preparingTurn: PreparingTurn | null;
 
   // Stage tracking
   currentStage: DebateStage | null;
@@ -76,12 +83,16 @@ interface DebateState {
   setSelectedFocus(selectedFocusId: string): void;
   setIntensityDraft(intensity: "mild" | "balanced" | "intense"): void;
   setUserContextDraft(userContext: string): void;
+  setPreparingTurn(sessionId: string, speaker: string, turnId: number, stage?: DebateStage): void;
   appendToken(sessionId: string, speaker: string, turnId: number, token: string, stage?: DebateStage): void;
   finalizeTurn(sessionId: string, speaker: string, turnId: number, fullContent: string, stage?: DebateStage): void;
   appendHostSummary(chunk: string): void;
   markStopRequested(): void;
   setDone(sessionId: string, reportPath: string, summaryImagePath?: string): void;
   setReportMarkdown(text: string): void;
+  setStructuredReport(report: StructuredReport): void;
+  addTraceEntry(entry: TraceEntry): void;
+  setTraceJournalPath(path: string): void;
   setError(msg: string): void;
   reset(): void;
 
@@ -119,6 +130,14 @@ const pushActivity = (
   return [...current.slice(-11), nextItem];
 };
 
+const pushTraceEntry = (current: TraceEntry[], entry: TraceEntry): TraceEntry[] => {
+  const last = current[current.length - 1];
+  if (last && last.id === entry.id) {
+    return current;
+  }
+  return [...current.slice(-199), entry];
+};
+
 const initialState = {
   currentTab: "config" as DebateRoomTab,
 
@@ -134,13 +153,17 @@ const initialState = {
   hostSummary: "",
   debaters: [] as DebaterConfig[],
   lines: [] as DebateLine[],
-  liveBuffers: {} as Record<string, string>,
+  liveBuffers: {} as Record<string, { content: string; stage?: DebateStage }>,
   reportPath: "",
+  traceJournalPath: "",
   reportMarkdown: "",
+  structuredReport: null as StructuredReport | null,
   errorMessage: "",
   activities: [] as WorkflowActivity[],
+  traceEntries: [] as TraceEntry[],
   activeSpeaker: "",
   activeTurnId: null as number | null,
+  preparingTurn: null as PreparingTurn | null,
 
   // Stage tracking
   currentStage: null as DebateStage | null,
@@ -239,7 +262,7 @@ export const useDebateStore = create<DebateState>((set) => ({
       activities: pushActivity(
         s.activities,
         "辩手阵列已建立",
-        `已生成 ${debaters.length} 位立场各异的辩手，倒计时开始。`,
+        `已生成 ${debaters.length} 位立场各异的辩手，30 分钟上限计时开始。`,
         "done",
       ),
     })),
@@ -273,17 +296,36 @@ export const useDebateStore = create<DebateState>((set) => ({
         "done",
       ),
     })),
+  setPreparingTurn: (sessionId, speaker, turnId, stage) =>
+    set((s) => ({
+      sessionId: s.sessionId || sessionId,
+      activeSpeaker: speaker,
+      activeTurnId: turnId,
+      preparingTurn: { speaker, turnId, stage },
+      activities: pushActivity(
+        s.activities,
+        `${speaker} 正在准备发言`,
+        `第 ${turnId + 1} 轮即将开始生成。`,
+        "live",
+      ),
+    })),
   appendToken: (sessionId, speaker, turnId, token, stage) => {
     const key = `${speaker}-${turnId}`;
     set((s) => {
       const firstTokenOfTurn = !s.liveBuffers[key];
+      const preparingTurnMatches =
+        s.preparingTurn?.speaker === speaker && s.preparingTurn?.turnId === turnId;
       return {
         sessionId: s.sessionId || sessionId,
         activeSpeaker: speaker,
         activeTurnId: turnId,
+        preparingTurn: preparingTurnMatches ? null : s.preparingTurn,
         liveBuffers: {
           ...s.liveBuffers,
-          [key]: (s.liveBuffers[key] || "") + token,
+          [key]: {
+            content: (s.liveBuffers[key]?.content || "") + token,
+            stage: stage || s.liveBuffers[key]?.stage,
+          },
         },
         activities: firstTokenOfTurn
           ? pushActivity(
@@ -308,6 +350,8 @@ export const useDebateStore = create<DebateState>((set) => ({
         sessionId: s.sessionId || sessionId,
         activeSpeaker: s.activeSpeaker === speaker && s.activeTurnId === turnId ? "" : s.activeSpeaker,
         activeTurnId: s.activeSpeaker === speaker && s.activeTurnId === turnId ? null : s.activeTurnId,
+        preparingTurn:
+          s.preparingTurn?.speaker === speaker && s.preparingTurn?.turnId === turnId ? null : s.preparingTurn,
         liveBuffers: nextBuffers,
         lines: [...s.lines, newLine],
         stageLines: {
@@ -329,14 +373,10 @@ export const useDebateStore = create<DebateState>((set) => ({
     })),
   markStopRequested: () =>
     set((s) => ({
-      status: "done" as const,
-      phase: "summarizing" as DebatePhase,
-      phaseLabel: "正在结束",
-      phaseDetail: "已请求提前结束，正在生成总结报告...",
       activities: pushActivity(
         s.activities,
         "已请求提前结束",
-        "正在生成总结报告...",
+        "系统会在当前轮次结束后进入主持人总结，并继续写入本地报告。",
         "neutral",
       ),
     })),
@@ -354,6 +394,7 @@ export const useDebateStore = create<DebateState>((set) => ({
         : s.images,
       activeSpeaker: "",
       activeTurnId: null,
+      preparingTurn: null,
       isConfigurationReady: false,
       activities: pushActivity(
         s.activities,
@@ -363,6 +404,15 @@ export const useDebateStore = create<DebateState>((set) => ({
       ),
     })),
   setReportMarkdown: (text) => set({ reportMarkdown: text }),
+  setStructuredReport: (report) => set({ structuredReport: report }),
+  addTraceEntry: (entry) =>
+    set((s) => ({
+      traceEntries: pushTraceEntry(s.traceEntries, entry),
+    })),
+  setTraceJournalPath: (path) =>
+    set((s) => ({
+      traceJournalPath: s.traceJournalPath || path,
+    })),
   setError: (msg) =>
     set((s) => ({
       status: "error",
@@ -370,6 +420,7 @@ export const useDebateStore = create<DebateState>((set) => ({
       phaseLabel: "流程异常",
       phaseDetail: msg,
       errorMessage: msg,
+      preparingTurn: null,
       activities: pushActivity(s.activities, "发生错误", msg, "error"),
     })),
   reset: () => set({ ...initialState }),

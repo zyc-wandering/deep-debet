@@ -17,7 +17,13 @@
       "Bash(dir D:\\\\projects\\\\debet_room_codex)",
       "Bash(chcp 65001)",
       "Bash(git checkout:*)",
-      "mcp__notion__notion-create-pages"
+      "mcp__notion__notion-create-pages",
+      "Bash(Get-ChildItem -Path frontend/src -Recurse -Filter \"*.tsx\" | Select-Object -First 30)",
+      "Bash(find frontend/src -name \"*.tsx\" -type f 2>/dev/null | head -30)",
+      "Bash(Get-ChildItem data/logs/sessions/ | Select-Object -First 10)",
+      "Bash(find .. -name \"*.log\" -type f -mtime -1 2>/dev/null | head -20)",
+      "Bash(ls -lt ../backend/backend.*.log | head -5)",
+      "Bash(ls -lt ../data/sessions/*.json | head -5)"
     ]
   }
 }

@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+from time import monotonic
 from typing import AsyncGenerator, List, Optional
 
 from app.agents.debater_agent import DebaterAgent
 from app.models import DebateMessage, DebateSession, DebateStage, FocusOption, SearchResult, SSEEvent
+from app.utils.formatting import with_trace_metadata
+from app.utils.logger import debate_logger
 
 
 class DebaterTurnExecutor:
-    """辩手发言执行器 - 处理单个辩手的完整发言流程"""
+    """Execute a full debater turn with consistent tracing and SSE events."""
 
     async def execute_turn(
         self,
@@ -21,34 +24,86 @@ class DebaterTurnExecutor:
         selected_focus: FocusOption | None = None,
         user_context: str = "",
         citations: Optional[List[SearchResult]] = None,
+        emit_start_event: bool = True,
     ) -> AsyncGenerator[SSEEvent, None]:
-        """执行单个辩手的完整发言"""
-        content_parts = []
+        turn_start = monotonic()
+        content_parts: list[str] = []
         citations = citations or []
 
-        async for token in agent.produce_turn_stream_stage(
-            topic=topic,
-            brief=brief,
-            messages=session.messages,
-            stage=stage,
-            intensity=intensity,
-            enable_search=False,
-            selected_focus=selected_focus,
-            user_context=user_context,
-        ):
-            content_parts.append(token)
-            yield SSEEvent(
-                event="debate_token",
-                data={
-                    "session_id": session.session_id,
-                    "speaker": agent.config.name,
-                    "turn_id": turn_id,
-                    "token": token,
-                    "stage": stage.value,
-                },
+        with debate_logger.span_context(f"turn:{stage.value}:{agent.config.name}:{turn_id}"):
+            debate_logger.turn_start(
+                speaker=agent.config.name,
+                turn_id=turn_id,
+                stage=stage.value,
+                extra={"intensity": intensity},
             )
 
-        content = "".join(content_parts)
+            if emit_start_event:
+                yield SSEEvent(
+                    event="debate_turn_start",
+                    data=with_trace_metadata(
+                        {
+                            "session_id": session.session_id,
+                            "speaker": agent.config.name,
+                            "turn_id": turn_id,
+                            "stage": stage.value,
+                        }
+                    ),
+                )
+
+            token_count = 0
+            try:
+                async for token in agent.produce_turn_stream_stage(
+                    topic=topic,
+                    brief=brief,
+                    messages=session.messages,
+                    stage=stage,
+                    intensity=intensity,
+                    enable_search=False,
+                    selected_focus=selected_focus,
+                    user_context=user_context,
+                ):
+                    content_parts.append(token)
+                    token_count += 1
+                    if token_count % 50 == 0:
+                        debate_logger.llm_stream_token(
+                            agent=agent.config.name,
+                            turn_id=turn_id,
+                            token_index=token_count,
+                            token=token,
+                        )
+                    yield SSEEvent(
+                        event="debate_token",
+                        data=with_trace_metadata(
+                            {
+                                "session_id": session.session_id,
+                                "speaker": agent.config.name,
+                                "turn_id": turn_id,
+                                "token": token,
+                                "stage": stage.value,
+                            }
+                        ),
+                    )
+            except Exception:
+                debate_logger.exception(
+                    f"Turn execution failed for {agent.config.name}",
+                    event_type="turn_error",
+                    speaker=agent.config.name,
+                    turn_id=turn_id,
+                    stage=stage.value,
+                    duration_sec=monotonic() - turn_start,
+                )
+                raise
+            content = "".join(content_parts)
+            duration = monotonic() - turn_start
+            debate_logger.turn_end(
+                speaker=agent.config.name,
+                turn_id=turn_id,
+                duration_sec=duration,
+                token_count=token_count,
+                content_length=len(content),
+            )
+
         message = DebateMessage(
             speaker=agent.config.name,
             role="debater",
@@ -62,12 +117,14 @@ class DebaterTurnExecutor:
 
         yield SSEEvent(
             event="debate_turn_end",
-            data={
-                "session_id": session.session_id,
-                "speaker": agent.config.name,
-                "turn_id": turn_id,
-                "full_content": content,
-                "citations": [citation.model_dump() for citation in citations] if citations else [],
-                "stage": stage.value,
-            },
+            data=with_trace_metadata(
+                {
+                    "session_id": session.session_id,
+                    "speaker": agent.config.name,
+                    "turn_id": turn_id,
+                    "full_content": content,
+                    "citations": [citation.model_dump() for citation in citations] if citations else [],
+                    "stage": stage.value,
+                }
+            ),
         )

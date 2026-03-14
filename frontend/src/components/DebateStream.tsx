@@ -1,43 +1,71 @@
 import { useEffect, useRef, useState } from "react";
-import { DebateLine, DebateStage } from "../types";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { DebateLine, DebateStage, PreparingTurn } from "../types";
+import { extractDebateSpeechContent } from "../utils/debateSpeech";
 
 interface Props {
   lines: DebateLine[];
+  preparingTurn?: PreparingTurn | null;
 }
 
 const stageLabels: Record<DebateStage, string> = {
-  opening: "开场陈述",
-  free_debate: "自由辩论",
-  closing: "总结陈词",
-  summary: "总结",
+  opening: "Opening",
+  free_debate: "Free Debate",
+  closing: "Closing",
+  summary: "Summary",
 };
 
-function StreamingText({ content, isLive }: { content: string; isLive?: boolean }) {
+function StreamingMarkdown({ content, stage, isLive }: { content: string; stage?: DebateStage; isLive?: boolean }) {
+  const markdown = extractDebateSpeechContent(content, stage);
+
   return (
-    <span className="streaming-content">
-      {content}
-      {isLive && <span className="cursor" />}
-    </span>
+    <div className="streaming-markdown">
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{markdown}</ReactMarkdown>
+      {isLive && <span className="cursor streaming-cursor" />}
+    </div>
   );
 }
 
-export function DebateStream({ lines }: Props) {
-  const scrollRef = autoScroll(lines);
+function PreparingBubble({ turn }: { turn: PreparingTurn }) {
+  return (
+    <article className="bubble preparing">
+      <header>
+        <div className="bubble-title">
+          <strong>{turn.speaker}</strong>
+          {turn.stage && <span className="stage-tag">{stageLabels[turn.stage]}</span>}
+          <span className="live-tag preparing-tag">
+            <span className="pulse loading-pulse" />
+            <span className="loading-word">loading</span>
+          </span>
+        </div>
+        <span className="turn">Turn {turn.turnId + 1}</span>
+      </header>
+
+      <div className="preparing-copy">
+        <p className="streaming-text">{turn.speaker} is preparing the next answer...</p>
+        <span className="preparing-subline">The system is assembling context and generating the next response.</span>
+      </div>
+    </article>
+  );
+}
+
+export function DebateStream({ lines, preparingTurn }: Props) {
+  const scrollRef = autoScroll(lines, Boolean(preparingTurn));
 
   return (
     <section className="panel stream-panel">
-      <div className="section-head">
+      <div className="section-head compact">
         <div>
-          <p className="eyebrow">辩论记录</p>
-          <h2>实时辩论记录</h2>
+          <h2>Debate Transcript</h2>
         </div>
-        <span className="muted">{lines.length} 段发言</span>
+        <span className="badge">{lines.length} turns</span>
       </div>
 
       <div ref={scrollRef} className="stream-list">
-        {lines.length === 0 && (
+        {lines.length === 0 && !preparingTurn && (
           <p className="muted empty-block">
-            等辩手就位后，第一轮发言会在这里实时展开。
+            Once the debaters start speaking, the live transcript will appear here.
           </p>
         )}
 
@@ -50,24 +78,26 @@ export function DebateStream({ lines }: Props) {
                 {line.isLive && (
                   <span className="live-tag">
                     <span className="pulse" />
-                    实时生成中
+                    Streaming
                   </span>
                 )}
               </div>
-              <span className="turn">第 {line.turnId + 1} 轮</span>
+              <span className="turn">Turn {line.turnId + 1}</span>
             </header>
 
-            <p className="streaming-text">
-              <StreamingText content={line.content} isLive={line.isLive} />
-            </p>
+            <div className="streaming-text debate-line-markdown">
+              <StreamingMarkdown content={line.content} stage={line.stage} isLive={line.isLive} />
+            </div>
           </article>
         ))}
+
+        {preparingTurn && <PreparingBubble turn={preparingTurn} />}
       </div>
     </section>
   );
 }
 
-function autoScroll(lines: DebateLine[]) {
+function autoScroll(lines: DebateLine[], hasPreparingTurn: boolean) {
   const ref = useRef<HTMLDivElement>(null);
   const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
 
@@ -76,10 +106,10 @@ function autoScroll(lines: DebateLine[]) {
     if (!el || !shouldAutoScroll) return;
 
     const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 100;
-    if (isNearBottom || lines.some((line) => line.isLive)) {
+    if (isNearBottom || hasPreparingTurn || lines.some((line) => line.isLive)) {
       el.scrollTop = el.scrollHeight;
     }
-  }, [lines, shouldAutoScroll]);
+  }, [hasPreparingTurn, lines, shouldAutoScroll]);
 
   useEffect(() => {
     const el = ref.current;
