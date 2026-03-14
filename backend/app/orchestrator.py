@@ -86,10 +86,11 @@ class DebateOrchestrator:
 
     async def start(self, request: DebateStartRequest) -> AsyncGenerator[SSEEvent, None]:
         """Start a session and stop after host research plus focus selection."""
-        host = HostAgent(self.llm, self.search)
+        host = HostAgent(self.llm, self.search, debate_language=request.debate_language)
         session = DebateSession(
             topic=request.topic,
             model_variant=request.model_variant,
+            debate_language=request.debate_language,
             state=SessionState.running,
             debater_count=request.debater_count,
             time_limit_sec=request.time_limit_sec,
@@ -149,11 +150,11 @@ class DebateOrchestrator:
     async def configure(self, request: DebateConfigureRequest) -> AsyncGenerator[SSEEvent, None]:
         """Resume a researched session after the user submits focus, intensity, and context."""
         start_clock = monotonic()
-        host = HostAgent(self.llm, self.search)
         session = self.session_store.get(request.session_id)
         if not session:
             yield self._error_event(request.session_id, "configure", "Session not found")
             return
+        host = HostAgent(self.llm, self.search, debate_language=session.debate_language)
 
         selected_focus = self._get_focus_option(session, request.pre_debate_config.selected_focus_id)
         if not selected_focus:
@@ -230,8 +231,10 @@ class DebateOrchestrator:
                 data={"session_id": session.session_id, "avatars": avatars},
             )
 
-            debater_agents = self._build_debater_agents(debaters)
-            selected_focus_name = selected_focus.name
+            debater_agents = self._build_debater_agents(
+                debaters,
+                debate_language=session.debate_language,
+            )
             user_context = request.pre_debate_config.user_context
             intensity = request.pre_debate_config.intensity
 
@@ -242,7 +245,7 @@ class DebateOrchestrator:
                 topic=session.topic,
                 brief=session.brief,
                 intensity=intensity,
-                selected_focus=selected_focus_name,
+                selected_focus=selected_focus,
                 user_context=user_context,
                 max_turns=session.max_turns,
                 enable_search=session.enable_debater_search,
@@ -289,7 +292,7 @@ class DebateOrchestrator:
         topic: str,
         brief: str,
         intensity: str,
-        selected_focus: str,
+        selected_focus: FocusOption | None,
         user_context: str,
         max_turns: int,
         enable_search: bool,
@@ -356,7 +359,7 @@ class DebateOrchestrator:
         topic: str,
         brief: str,
         intensity: str,
-        selected_focus: str,
+        selected_focus: FocusOption | None,
         user_context: str,
     ) -> AsyncGenerator[SSEEvent, None]:
         """Execute a single debate stage."""
@@ -438,6 +441,7 @@ class DebateOrchestrator:
                         llm=self.llm,
                         search=self.search,
                         context_manager=ContextManager(),
+                        debate_language=session.debate_language,
                     )
                     break
 
@@ -458,7 +462,7 @@ class DebateOrchestrator:
         follow_up: FollowUpMessage,
     ) -> AsyncGenerator[SSEEvent, None]:
         """Handle follow-up question for the host."""
-        host = HostAgent(self.llm, self.search)
+        host = HostAgent(self.llm, self.search, debate_language=session.debate_language)
         response_parts = []
         async for token in host.follow_up_stream(
             topic=session.topic,
@@ -535,7 +539,11 @@ class DebateOrchestrator:
             logging.getLogger(__name__).warning("Failed to generate avatar for %s: %s", debater.name, exc)
             return None
 
-    def _build_debater_agents(self, debaters: List[DebaterConfig]) -> List[DebaterAgent]:
+    def _build_debater_agents(
+        self,
+        debaters: List[DebaterConfig],
+        debate_language,
+    ) -> List[DebaterAgent]:
         """Build DebaterAgent instances from configurations."""
         return [
             DebaterAgent(
@@ -543,6 +551,7 @@ class DebateOrchestrator:
                 llm=self.llm,
                 search=self.search,
                 context_manager=ContextManager(),
+                debate_language=debate_language,
             )
             for debater in debaters
         ]

@@ -33,6 +33,7 @@ export type DebatePhase =
 
 // Explicit debate stages for structured debate flow
 export type DebateStage = "opening" | "free_debate" | "closing" | "summary";
+export type DebateLanguage = "zh" | "en";
 
 export type DebateRoomTab = "config" | "host" | "debate" | "summary";
 
@@ -126,6 +127,7 @@ export interface DebateStartRequest {
   time_limit_sec: number;
   max_turns: number;
   enable_debater_search: boolean;
+  debate_language: DebateLanguage;
   model_variant: "lite" | "pro";
   fun_mode: "persona_clash";
 }

@@ -444,6 +444,58 @@ input::placeholder {
   grid-template-columns: minmax(0, 260px);
 }
 
+.language-panel {
+  display: grid;
+  gap: 14px;
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background:
+    linear-gradient(135deg, rgba(154, 93, 55, 0.08), rgba(154, 93, 55, 0.02)),
+    var(--surface-strong);
+}
+
+.language-panel-copy {
+  display: grid;
+  gap: 6px;
+}
+
+.language-toggle {
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 8px;
+  border-radius: 18px;
+  border: 1px solid rgba(154, 93, 55, 0.14);
+  background: rgba(255, 248, 241, 0.9);
+}
+
+.language-toggle button {
+  min-height: 44px;
+  padding: 12px 16px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--ink-faint);
+  font-weight: 600;
+}
+
+.language-toggle button.active {
+  border-color: rgba(154, 93, 55, 0.24);
+  background: linear-gradient(135deg, rgba(154, 93, 55, 0.16), rgba(154, 93, 55, 0.08));
+  color: var(--ink);
+  box-shadow: 0 10px 24px rgba(109, 61, 34, 0.12);
+}
+
+.language-toggle button:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.language-toggle button:disabled {
+  opacity: 0.52;
+  cursor: not-allowed;
+}
+
 .toggle-field {
   display: grid;
   grid-template-columns: 20px 1fr;

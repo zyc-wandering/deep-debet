@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import AsyncGenerator, List, Optional
 
 from app.agents.debater_agent import DebaterAgent
-from app.models import DebateMessage, DebateSession, DebateStage, SearchResult, SSEEvent
+from app.models import DebateMessage, DebateSession, DebateStage, FocusOption, SearchResult, SSEEvent
 
 
 class DebaterTurnExecutor:
@@ -18,7 +18,7 @@ class DebaterTurnExecutor:
         turn_id: int,
         stage: DebateStage,
         intensity: str,
-        selected_focus: str = "",
+        selected_focus: FocusOption | None = None,
         user_context: str = "",
         citations: Optional[List[SearchResult]] = None,
     ) -> AsyncGenerator[SSEEvent, None]:

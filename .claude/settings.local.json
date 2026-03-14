@@ -16,7 +16,8 @@
       "Bash(Get-ChildItem:*)",
       "Bash(dir D:\\\\projects\\\\debet_room_codex)",
       "Bash(chcp 65001)",
-      "Bash(git checkout:*)"
+      "Bash(git checkout:*)",
+      "mcp__notion__notion-create-pages"
     ]
   }
 }

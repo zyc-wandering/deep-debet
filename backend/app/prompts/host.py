@@ -1,36 +1,28 @@
 from __future__ import annotations
 
-from app.models import FocusOption
-from app.prompts.utils import compact_prompt
+from app.models import DebateLanguage, FocusOption
+from app.prompts.catalog import get_prompt_code_block
+from app.prompts.utils import apply_output_language_override, compact_prompt, normalize_prompt_language
 
 
-HOST_SYSTEM_PROMPT = compact_prompt(
-    """
-    You are a professional debate host and research analyst.
-    You produce concise Chinese output unless the user explicitly asks for JSON.
-    Your job is not to force harmony. Your job is to decide which thesis survives scrutiny better.
-    Judge by evidence quality, causal clarity, responsiveness to objections, and whether other debaters were forced into concessions or retreats.
-    Do not invent compromise conclusions unless a debater explicitly argued for and defended that compromise.
-    """
-)
+def get_host_system_prompt(language: DebateLanguage | str = DebateLanguage.zh) -> str:
+    return apply_output_language_override(get_prompt_code_block(1, language), language)
 
 
-def build_research_prompt(topic: str, citations_text: str) -> str:
-    return compact_prompt(
-        f"""
-        话题：{topic}
+HOST_SYSTEM_PROMPT = get_host_system_prompt(DebateLanguage.zh)
 
-        请基于现有材料生成一份 500-800 字中文研究简报，供后续主持人准备和辩手交锋使用。
-        要求：
-        1. 不要写成百科综述，要聚焦真正决定胜负的争点。
-        2. 明确区分：已知事实、主要不确定性、最关键的证据门槛。
-        3. 明确指出：什么样的论证在这场辩论里更容易站住。
-        4. 如果外部材料不足，也要明确说出哪些部分仍待验证。
 
-        参考材料：
-        {citations_text}
-        """
+def build_research_prompt(
+    topic: str,
+    citations_text: str,
+    language: DebateLanguage | str = DebateLanguage.zh,
+) -> str:
+    template = get_prompt_code_block(2, language)
+    prompt = (
+        template.replace("{topic}", topic)
+        .replace("{citations_text}", citations_text)
     )
+    return apply_output_language_override(prompt, language)
 
 
 def build_debater_generation_prompt(
@@ -40,134 +32,103 @@ def build_debater_generation_prompt(
     intensity: str,
     selected_focus: FocusOption | None = None,
     user_context: str = "",
+    language: DebateLanguage | str = DebateLanguage.zh,
 ) -> str:
-    focus_block = ""
-    if selected_focus:
-        focus_block = compact_prompt(
-            f"""
-            用户当前更关注的讨论切面：
-            - 名称：{selected_focus.name}
-            - 说明：{selected_focus.description}
-            至少一位辩手要把这个切面当作核心战场，但不能把所有辩手都压成同一种视角。
-            """
+    debate_language = normalize_prompt_language(language)
+    template = get_prompt_code_block(4, debate_language)
+
+    if debate_language == DebateLanguage.zh:
+        focus_block = ""
+        if selected_focus:
+            focus_block = compact_prompt(
+                f"""
+                讨论焦点：{selected_focus.name} — {selected_focus.description}
+                后续辩论将围绕此焦点展开，辩手的立场和论点应与此焦点高度相关。
+                """
+            )
+        user_context_block = ""
+        if user_context.strip():
+            user_context_block = compact_prompt(
+                f"""
+                用户补充背景：{user_context.strip()}
+                辩手设计时可参考此背景，但不得顺着用户预设答案造角色。
+                """
+            )
+        prompt = (
+            template.replace("{topic}", topic)
+            .replace("{brief[:1500]}", brief[:1500])
+            .replace("{debater_count}", str(debater_count))
+            .replace("{intensity}", intensity)
+            .replace("[可选焦点块]\n讨论焦点：{focus_name} — {focus_description}\n后续辩论将围绕此焦点展开，辩手的立场和论点应与此焦点高度相关。", focus_block)
+            .replace("[可选用户上下文块]\n用户补充背景：{user_context}\n辩手设计时可参考此背景，但不得顺着用户预设答案造角色。", user_context_block)
+        )
+    else:
+        focus_block = ""
+        if selected_focus:
+            focus_block = compact_prompt(
+                f"""
+                Discussion Focus: {selected_focus.name} — {selected_focus.description}
+                The debate will center on this focus. Debaters' positions and arguments should be highly relevant to it.
+                """
+            )
+        user_context_block = ""
+        if user_context.strip():
+            user_context_block = compact_prompt(
+                f"""
+                User-provided background: {user_context.strip()}
+                May inform debater design, but do not create characters that simply confirm the user's presumed answer.
+                """
+            )
+        prompt = (
+            template.replace("{topic}", topic)
+            .replace("{brief[:1500]}", brief[:1500])
+            .replace("{debater_count}", str(debater_count))
+            .replace("{intensity}", intensity)
+            .replace("[OPTIONAL FOCUS BLOCK]\nDiscussion Focus: {focus_name} — {focus_description}\nThe debate will center on this focus. Debaters' positions and arguments should be highly relevant to it.", focus_block)
+            .replace("[OPTIONAL USER CONTEXT BLOCK]\nUser-provided background: {user_context}\nMay inform debater design, but do not create characters that simply confirm the user's presumed answer.", user_context_block)
         )
 
-    context_block = f"用户补充场景：{user_context.strip()}" if user_context.strip() else ""
+    return apply_output_language_override(prompt, debate_language)
 
-    return compact_prompt(
-        f"""
-        话题：{topic}
 
-        任务：设计 {debater_count} 位辩手，只返回 JSON 数组。
-        每个元素必须包含以下字段：
-        - name
-        - background
-        - stance
-        - personality
-        - speaking_style
-        - avatar_emoji
+def build_focus_options_prompt(
+    topic: str,
+    brief: str,
+    language: DebateLanguage | str = DebateLanguage.zh,
+) -> str:
+    template = get_prompt_code_block(3, language)
+    prompt = template.replace("{topic}", topic).replace("{brief[:1500]}", brief[:1500])
+    return apply_output_language_override(prompt, language)
 
-        设计要求：
-        1. 每位辩手都必须像真实世界里的利益相关方、分析者、执行者或批评者，不能像抽象标签。
-        2. 立场必须鲜明，并且彼此之间存在真实冲突，不能只是措辞不同。
-        3. 辩手之间的差异应来自激励、分析框架、机构位置、风险偏好或时间尺度，而不是表演式对骂。
-        4. 至少一位辩手擅长拆前提和交叉质询，至少一位擅长证据和机制分析。
-        5. 允许辩手在被有效击中后局部修正，但修正后必须重建，而不是滑向“大家都对”。
-        6. intensity={intensity} 只影响交锋锐度，不改变观点方向。
-        7. 不要顺着用户想要的答案造角色，角色必须围绕议题本身自然展开。
 
-        {focus_block}
-
-        {context_block}
-
-        主持人研究简报：
-        {brief[:1500]}
-        """
+def build_summary_prompt(
+    topic: str,
+    brief: str,
+    transcript: str,
+    language: DebateLanguage | str = DebateLanguage.zh,
+) -> str:
+    template = get_prompt_code_block(5, language)
+    prompt = (
+        template.replace("{topic}", topic)
+        .replace("{brief}", brief)
+        .replace("{transcript[:7000]}", transcript[:7000])
     )
+    return apply_output_language_override(prompt, language)
 
 
-def build_focus_options_prompt(topic: str, brief: str) -> str:
-    return compact_prompt(
-        f"""
-        话题：{topic}
-
-        主持人研究简报：
-        {brief[:1500]}
-
-        请提出 2-3 个用户可能更关心的讨论切面，并返回 JSON 数组。
-        每个元素必须包含：
-        - "name": 10 字以内
-        - "description": 40 字以内
-
-        要求：
-        1. 切面必须来自议题内部的真实分歧，例如执行风险、责任归属、时间结构、收益分配、治理复杂度。
-        2. 不要输出“支持哪边”“反对哪边”之类答案导向选项。
-        3. 每个切面都应该显著改变后续辩论的关注重点。
-        """
+def build_structured_summary_prompt(
+    topic: str,
+    brief: str,
+    transcript: str,
+    language: DebateLanguage | str = DebateLanguage.zh,
+) -> str:
+    template = get_prompt_code_block(6, language)
+    prompt = (
+        template.replace("{topic}", topic)
+        .replace("{brief}", brief)
+        .replace("{transcript[:7000]}", transcript[:7000])
     )
-
-
-def build_summary_prompt(topic: str, brief: str, transcript: str) -> str:
-    return compact_prompt(
-        f"""
-        话题：{topic}
-
-        研究简报：
-        {brief}
-
-        辩论记录：
-        {transcript[:7000]}
-
-        请输出一份中文 Markdown 报告，严格包含以下部分：
-        1. 背景摘要
-        2. 各方核心观点与代表性论证
-        3. 关键交锋与漏洞暴露
-        4. 让步、修正与立场变化
-        5. 综合分析
-        6. 最终裁决
-
-        最终裁决必须固定包含三行：
-        - 胜出观点：...
-        - 最强辩手：...
-        - 胜出原因：...
-
-        额外要求：
-        1. 必须从本场已经出现的观点中选边，不允许主持人发明折中答案。
-        2. 裁决标准只看：证据质量、逻辑链完整度、回应反驳能力、是否迫使对手退让。
-        3. 不要写成“大家都有道理”。
-        4. 如果关键证据不足，也要明确说明是在什么意义上暂时偏向哪一方。
-        """
-    )
-
-
-def build_structured_summary_prompt(topic: str, brief: str, transcript: str) -> str:
-    return compact_prompt(
-        f"""
-        话题：{topic}
-
-        研究简报：
-        {brief}
-
-        辩论记录：
-        {transcript[:7000]}
-
-        请输出 JSON 对象，字段必须包含：
-        - background_summary
-        - core_arguments
-        - clash_points
-        - synthesis
-        - host_conclusion
-        - argument_nodes
-
-        字段要求：
-        1. core_arguments 的每项包含：speaker, stance, key_points
-        2. clash_points 的每项包含：topic, positions
-        3. argument_nodes 的每项包含：id, speaker, content, turn_index, targets, status, focal_point
-        4. argument_nodes.status 只允许：claim, support, attack, concession
-        5. host_conclusion 必须明确指出当前更占优的观点、最有说服力的辩手、以及裁决依据
-        6. host_conclusion 必须从现有辩手观点中选边，不允许中立搪塞
-        """
-    )
+    return apply_output_language_override(prompt, language)
 
 
 def build_follow_up_prompt(
@@ -176,35 +137,40 @@ def build_follow_up_prompt(
     synthesis: str,
     transcript: str,
     question: str,
+    language: DebateLanguage | str = DebateLanguage.zh,
 ) -> str:
-    return compact_prompt(
-        f"""
-        话题：{topic}
-
-        研究简报：
-        {brief[:800]}
-
-        当前综合判断：
-        {synthesis[:500]}
-
-        最近辩论记录：
-        {transcript[:2000]}
-
-        用户问题：{question}
-
-        请以主持人身份作答。
-        要求：
-        1. 基于本场辩论已有内容回答，不要引入场外新事实。
-        2. 可以明确说明当前更占优的一方，但要讲清依据。
-        3. 区分哪些判断有明确证据，哪些只是推测。
-        4. 控制在 300 字内。
-        """
+    template = get_prompt_code_block(7, language)
+    prompt = (
+        template.replace("{topic}", topic)
+        .replace("{brief[:800]}", brief[:800])
+        .replace("{synthesis[:500]}", synthesis[:500])
+        .replace("{transcript[:2000]}", transcript[:2000])
+        .replace("{question}", question)
     )
+    return apply_output_language_override(prompt, language)
 
 
-def build_json_array_repair_prompt(schema_description: str, raw_output: str) -> str:
-    return compact_prompt(
-        f"""
+def build_json_array_repair_prompt(
+    schema_description: str,
+    raw_output: str,
+    language: DebateLanguage | str = DebateLanguage.zh,
+) -> str:
+    debate_language = normalize_prompt_language(language)
+    if debate_language == DebateLanguage.en:
+        prompt = f"""
+        Your previous output did not satisfy the format requirements.
+        Fix it into a valid JSON array.
+
+        Requirements:
+        {schema_description}
+
+        Return only the JSON array. No explanation, no Markdown, no code fence.
+
+        Original output:
+        {raw_output}
+        """
+    else:
+        prompt = f"""
         你上一轮的输出不符合要求。
         现在请只做一件事：把原输出修正为合法 JSON 数组。
 
@@ -216,12 +182,30 @@ def build_json_array_repair_prompt(schema_description: str, raw_output: str) -> 
         原输出：
         {raw_output}
         """
-    )
+    return compact_prompt(prompt)
 
 
-def build_json_object_repair_prompt(schema_description: str, raw_output: str) -> str:
-    return compact_prompt(
-        f"""
+def build_json_object_repair_prompt(
+    schema_description: str,
+    raw_output: str,
+    language: DebateLanguage | str = DebateLanguage.zh,
+) -> str:
+    debate_language = normalize_prompt_language(language)
+    if debate_language == DebateLanguage.en:
+        prompt = f"""
+        Your previous output did not satisfy the format requirements.
+        Fix it into a valid JSON object.
+
+        Requirements:
+        {schema_description}
+
+        Return only the JSON object. No explanation, no Markdown, no code fence.
+
+        Original output:
+        {raw_output}
+        """
+    else:
+        prompt = f"""
         你上一轮的输出不符合要求。
         现在请只做一件事：把原输出修正为合法 JSON 对象。
 
@@ -233,14 +217,31 @@ def build_json_object_repair_prompt(schema_description: str, raw_output: str) ->
         原输出：
         {raw_output}
         """
-    )
+    return compact_prompt(prompt)
 
 
-def build_markdown_repair_prompt(requirements: str, raw_output: str) -> str:
-    return compact_prompt(
-        f"""
+def build_markdown_repair_prompt(
+    requirements: str,
+    raw_output: str,
+    language: DebateLanguage | str = DebateLanguage.zh,
+) -> str:
+    debate_language = normalize_prompt_language(language)
+    if debate_language == DebateLanguage.en:
+        prompt = f"""
+        Your previous output did not satisfy the format requirements.
+        Preserve the original meaning, but rewrite it as Markdown that satisfies these hard requirements:
+
+        {requirements}
+
+        Return only the corrected Markdown. No explanation.
+
+        Original output:
+        {raw_output}
+        """
+    else:
+        prompt = f"""
         你上一轮的输出未满足格式要求。
-        请保留原意，但重写为满足以下硬性要求的中文 Markdown：
+        请保留原意，但重写为满足以下硬性要求的 Markdown：
 
         {requirements}
 
@@ -249,4 +250,4 @@ def build_markdown_repair_prompt(requirements: str, raw_output: str) -> str:
         原输出：
         {raw_output}
         """
-    )
+    return compact_prompt(prompt)

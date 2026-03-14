@@ -1,5 +1,5 @@
 from app.agents.context_manager import ContextManager
-from app.models import DebateMessage
+from app.models import DebateLanguage, DebateMessage
 
 
 def test_context_window_limits_recent_messages():
@@ -27,7 +27,19 @@ def test_rolling_summary_non_empty_when_exceed_window():
         for i in range(5)
     ]
     summary = manager.refresh_rolling_summary(msgs)
-    assert "Earlier rounds condensed" in summary
+    assert "较早轮次摘要" in summary
+
+
+def test_rolling_summary_supports_english_language():
+    manager = ContextManager(recent_window_size=2)
+    msgs = [
+        DebateMessage(speaker=f"d{i}", role="debater", content=f"content-{i}", turn_index=i)
+        for i in range(5)
+    ]
+
+    summary = manager.refresh_rolling_summary(msgs, language=DebateLanguage.en)
+
+    assert "Earlier rounds condensed by speaker" in summary
 
 
 def test_context_window_keeps_latest_message_from_each_other_speaker():

@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import AsyncGenerator, List
 
-from app.models import DebateSession, DebateMessage, SSEEvent
+from app.models import DebateSession, DebateMessage, FocusOption, SSEEvent
 from app.agents.debater_agent import DebaterAgent
 
 
@@ -16,7 +16,7 @@ class StageContext:
     topic: str
     brief: str
     intensity: str
-    selected_focus: str
+    selected_focus: FocusOption | None
     user_context: str
     start_turn_id: int
 

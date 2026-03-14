@@ -8,6 +8,7 @@ def test_start_request_defaults():
     assert req.debater_count == 3
     assert req.max_turns == 24
     assert req.enable_debater_search is False
+    assert req.debate_language == "zh"
 
 
 def test_fun_mode_validation():

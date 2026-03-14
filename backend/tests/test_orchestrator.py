@@ -9,6 +9,7 @@ from app.agents.host_agent import HostAgent
 from app.execution.turn_executor import DebaterTurnExecutor
 from app.models import (
     DebaterConfig,
+    DebateLanguage,
     DebateConfigureRequest,
     DebateSession,
     DebateStage,
@@ -109,7 +110,7 @@ async def test_closing_stage_emits_stage_change_without_model_init_error(tmp_pat
         topic=session.topic,
         brief="brief",
         intensity="balanced",
-        selected_focus="Execution risk",
+        selected_focus=FocusOption(name="Execution risk", description="Reality of implementation and cost"),
         user_context="",
         start_turn_id=0,
     )
@@ -145,7 +146,13 @@ async def test_start_stops_after_focus_options_ready_without_debaters(monkeypatc
 
     events = []
     async for event in orchestrator.start(
-        DebateStartRequest(topic="Should I change jobs?", debater_count=3, time_limit_sec=360, max_turns=24)
+        DebateStartRequest(
+            topic="Should I change jobs?",
+            debater_count=3,
+            time_limit_sec=360,
+            max_turns=24,
+            debate_language=DebateLanguage.en,
+        )
     ):
         events.append(event)
 
@@ -154,6 +161,7 @@ async def test_start_stops_after_focus_options_ready_without_debaters(monkeypatc
 
     assert session is not None
     assert session.state == "configuring"
+    assert session.debate_language == DebateLanguage.en
     assert session.deadline_at is None
     assert [event.event for event in events] == ["phase", "phase", "host_research", "focus_options_ready", "phase"]
     assert all(event.event != "debaters_ready" for event in events)
@@ -357,7 +365,7 @@ async def test_custom_stage_execution(tmp_path):
         topic=session.topic,
         brief="brief",
         intensity="balanced",
-        selected_focus="Testing",
+        selected_focus=FocusOption(name="Testing", description="Stage extensibility behavior"),
         user_context="",
         start_turn_id=0,
     )

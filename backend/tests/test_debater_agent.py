@@ -2,7 +2,7 @@ import pytest
 
 from app.agents.context_manager import ContextManager
 from app.agents.debater_agent import DebaterAgent
-from app.models import DebaterConfig, DebateMessage, DebateStage
+from app.models import DebaterConfig, DebateLanguage, DebateMessage, DebateStage, FocusOption
 from app.providers.base import LLMProvider, SearchProvider
 
 
@@ -56,6 +56,10 @@ def make_agent(llm: LLMProvider) -> DebaterAgent:
     )
 
 
+def make_focus() -> FocusOption:
+    return FocusOption(name="执行风险", description="优先看现实落地成本与责任边界")
+
+
 @pytest.mark.anyio
 async def test_produce_turn_returns_llm_output_directly():
     agent = make_agent(StaticLLM("这是模型生成的发言。"))
@@ -96,7 +100,7 @@ async def test_stream_stage_falls_back_to_non_stream_llm_response_only():
         stage=DebateStage.free_debate,
         intensity="balanced",
         enable_search=False,
-        selected_focus="执行风险",
+        selected_focus=make_focus(),
         user_context="重点看责任边界。",
     ):
         chunks.append(token)
@@ -107,8 +111,29 @@ async def test_stream_stage_falls_back_to_non_stream_llm_response_only():
 def test_stage_prompt_requires_concession_and_rebuild_when_broken():
     agent = make_agent(StaticLLM("stub"))
 
-    prompt = agent._system_prompt_stage(DebateStage.free_debate, "intense", "执行风险", "")
-    instruction = agent._get_stage_instruction(DebateStage.free_debate, "执行风险", "")
+    prompt = agent._system_prompt_stage(DebateStage.free_debate, "intense", make_focus(), "")
+    instruction = agent._get_stage_instruction(DebateStage.free_debate, make_focus(), "")
 
-    assert "concede" in prompt.lower()
+    assert "先承认具体问题" in prompt
     assert "重建" in instruction
+
+
+def test_english_mode_uses_english_output_override():
+    agent = DebaterAgent(
+        config=DebaterConfig(
+            name="Zhou",
+            background="Policy researcher",
+            stance="AI should stay assistive rather than autonomous in high-risk review",
+            personality="Analytical premise-deconstruction thinker",
+            speaking_style="tight and direct",
+            avatar_emoji="Z",
+        ),
+        llm=StaticLLM("stub"),
+        search=EmptySearch(),
+        context_manager=ContextManager(),
+        debate_language=DebateLanguage.en,
+    )
+
+    prompt = agent._system_prompt_stage(DebateStage.free_debate, "balanced", None, "")
+
+    assert "All natural-language output for this debate must be in English" in prompt

@@ -2,6 +2,7 @@ import { create } from "zustand";
 import {
   DebateImages,
   DebateLine,
+  DebateLanguage,
   DebaterConfig,
   DebatePhase,
   DebateRoomTab,
@@ -22,6 +23,7 @@ interface DebateState {
   phaseLabel: string;
   phaseDetail: string;
   topic: string;
+  debateLanguage: DebateLanguage;
   sessionId: string;
   debateDeadlineMs: number | null;
   hostResearch: string;
@@ -60,7 +62,7 @@ interface DebateState {
   setTab(tab: DebateRoomTab): void;
 
   // Debate actions
-  start(topic: string): void;
+  start(topic: string, debateLanguage: DebateLanguage): void;
   setSessionId(sessionId: string): void;
   setPhase(phase: DebatePhase, label: string, detail?: string): void;
   setStage(stage: DebateStage): void;
@@ -125,6 +127,7 @@ const initialState = {
   phaseLabel: "准备开始",
   phaseDetail: "输入一个具体命题后即可发起辩论。",
   topic: "",
+  debateLanguage: "zh" as DebateLanguage,
   sessionId: "",
   debateDeadlineMs: null as number | null,
   hostResearch: "",
@@ -166,10 +169,11 @@ export const useDebateStore = create<DebateState>((set) => ({
   // Navigation
   setTab: (tab) => set({ currentTab: tab }),
 
-  start: (topic) =>
+  start: (topic, debateLanguage) =>
     set({
       ...initialState,
       topic,
+      debateLanguage,
       currentTab: "host",
       status: "running",
       phase: "booting",

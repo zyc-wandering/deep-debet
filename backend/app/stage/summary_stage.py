@@ -37,7 +37,7 @@ class SummaryStageExecutor(DebateStageExecutor):
 
     async def execute(self, ctx: StageContext) -> AsyncGenerator[SSEEvent, None]:
         """执行报告生成阶段"""
-        host = HostAgent(self._llm, self._search)
+        host = HostAgent(self._llm, self._search, debate_language=ctx.session.debate_language)
         session = ctx.session
 
         structured_report = await host.summarize_debate_structured(

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useDebateStore } from "../store/debateStore";
-import { DebateStartRequest } from "../types";
+import { DebateLanguage, DebateStartRequest } from "../types";
 
 interface Props {
   onStart: (payload: DebateStartRequest) => void;
@@ -48,6 +48,7 @@ export function ConfigPage({ onStart, isRunning }: Props) {
   const [topic, setTopic] = useState(
     "经济下行阶段，企业是否应该用裁员来优先控制成本？",
   );
+  const [debateLanguage, setDebateLanguage] = useState<DebateLanguage>("zh");
   const [debaterCount, setDebaterCount] = useState(3);
   const [timeLimit, setTimeLimit] = useState(360);
   const [maxTurns, setMaxTurns] = useState(24);
@@ -67,6 +68,7 @@ export function ConfigPage({ onStart, isRunning }: Props) {
       time_limit_sec: timeLimit,
       max_turns: maxTurns,
       enable_debater_search: enableSearch,
+      debate_language: debateLanguage,
       model_variant: modelVariant,
       fun_mode: "persona_clash",
     });
@@ -126,6 +128,34 @@ export function ConfigPage({ onStart, isRunning }: Props) {
               <p className="field-hint">
                 最适合的辩题通常带有现实压力、取舍冲突，而且不存在显而易见的安全答案。
               </p>
+
+              <div className="language-panel" role="group" aria-label="辩论语言">
+                <div className="language-panel-copy">
+                  <span className="field-label">辩论过程语言</span>
+                  <p className="field-hint">
+                    只影响主持人调研、辩手发言、总结报告和追问内容的语言，不会改动界面文案。
+                  </p>
+                </div>
+
+                <div className="language-toggle">
+                  <button
+                    type="button"
+                    className={debateLanguage === "zh" ? "active" : ""}
+                    onClick={() => setDebateLanguage("zh")}
+                    disabled={isRunning}
+                  >
+                    中文辩论
+                  </button>
+                  <button
+                    type="button"
+                    className={debateLanguage === "en" ? "active" : ""}
+                    onClick={() => setDebateLanguage("en")}
+                    disabled={isRunning}
+                  >
+                    English Debate
+                  </button>
+                </div>
+              </div>
             </div>
 
             <div className="form-section">
@@ -231,6 +261,10 @@ export function ConfigPage({ onStart, isRunning }: Props) {
                 <article>
                   <span>模型</span>
                   <strong>{modelVariant.toUpperCase()}</strong>
+                </article>
+                <article>
+                  <span>语言</span>
+                  <strong>{debateLanguage === "zh" ? "中文" : "English"}</strong>
                 </article>
               </div>
 

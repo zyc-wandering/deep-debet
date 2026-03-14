@@ -1,178 +1,200 @@
 from __future__ import annotations
 
-from app.models import DebaterConfig, DebateStage, SearchResult
-from app.prompts.utils import compact_prompt
+from app.models import DebaterConfig, DebateLanguage, DebateStage, FocusOption, SearchResult
+from app.prompts.catalog import get_named_code_block, get_prompt_code_block
+from app.prompts.utils import apply_output_language_override, compact_prompt, normalize_prompt_language
 
 
-def build_base_system_prompt(config: DebaterConfig) -> str:
-    return compact_prompt(
-        f"""
-        You are debater {config.name}.
-        Background: {config.background}
-        Core stance: {config.stance}
-        Public persona: {config.personality}
-        Speaking style: {config.speaking_style}
-
-        Output language: Chinese.
-        Your task is to prove your position survives scrutiny better than competing positions.
-
-        Rules:
-        1. Attack the opponent's weakest premise, evidence gap, broken causal chain, or inconsistent judging standard.
-        2. If you are effectively hit, admit the local problem briefly, revise, and rebuild from a stronger version.
-        3. A concession is valuable only if it sharpens your position. Do not drift into “everyone is right”.
-        4. Every turn must add pressure, evidence, a tighter distinction, or a clearer decision rule.
-        5. Critique arguments, not persons.
-        6. Keep each answer around 180-280 Chinese characters with high information density.
-        """
+def _base_system_prompt_template(
+    config: DebaterConfig,
+    language: DebateLanguage | str,
+) -> str:
+    template = get_prompt_code_block(8, language)
+    return (
+        template.replace("{config.name}", config.name)
+        .replace("{config.background}", config.background)
+        .replace("{config.stance}", config.stance)
+        .replace("{config.personality}", config.personality)
+        .replace("{config.speaking_style}", config.speaking_style)
     )
 
 
-def build_general_turn_instruction() -> str:
-    return compact_prompt(
-        """
-        请给出本轮发言。
-        优先处理当前最值得裁决的冲突点，不要机械重复上一轮。
-        本轮至少完成一项：
-        1. 指出对手的逻辑漏洞、证据缺口、因果链断点或标准冲突；
-        2. 回应上一轮针对你的有效攻击；
-        3. 在局部修正后用更强版本重建立场。
-        """
-    )
+def build_base_system_prompt(
+    config: DebaterConfig,
+    language: DebateLanguage | str = DebateLanguage.zh,
+) -> str:
+    prompt = _base_system_prompt_template(config, language)
+    return apply_output_language_override(prompt, language)
+
+
+def build_general_turn_instruction(
+    language: DebateLanguage | str = DebateLanguage.zh,
+) -> str:
+    prompt = get_prompt_code_block(11, language)
+    return apply_output_language_override(prompt, language)
 
 
 def build_stage_system_prompt(
     config: DebaterConfig,
     stage: DebateStage,
     intensity: str,
-    selected_focus: str = "",
+    selected_focus: FocusOption | None = None,
     user_context: str = "",
+    language: DebateLanguage | str = DebateLanguage.zh,
 ) -> str:
-    stage_map = {
-        DebateStage.opening: (
-            "Stage: opening statement. Establish your thesis, your judging standard, "
-            "and what evidence would prove you wrong."
-        ),
-        DebateStage.free_debate: (
-            "Stage: free debate. Prioritize exposing weak assumptions, evidence gaps, "
-            "causal errors, and unanswered tradeoffs. If a line is broken, concede locally and rebuild."
-        ),
-        DebateStage.closing: (
-            "Stage: closing statement. Explain which side survived scrutiny better, "
-            "what you had to revise, and which unanswered objection still breaks the other case."
-        ),
-        DebateStage.summary: "Stage: summary.",
-    }
-    intensity_map = {
-        "mild": "Tone: calm, sharp, and restrained.",
-        "balanced": "Tone: firm and adversarial.",
-        "intense": "Tone: high-pressure, fast, and unsparing, while still evidence-based.",
-    }
+    debate_language = normalize_prompt_language(language)
+    template = get_prompt_code_block(9, debate_language)
+    base_prompt = _base_system_prompt_template(config, debate_language)
+    stage_value = stage.value
 
-    focus_block = ""
-    if selected_focus:
-        focus_block = (
-            f"\nUser-selected focus that must stay in play: {selected_focus}\n"
-            "Treat it as a required battleground, not as a preferred answer."
+    if debate_language == DebateLanguage.zh:
+        focus_block = ""
+        if selected_focus:
+            focus_block = compact_prompt(
+                f"""
+                本场聚焦：{selected_focus.name} — {selected_focus.description}
+                你的所有论证应紧扣此焦点展开。偏离焦点的论证，即使有道理，也会被判为降低得分。
+                """
+            )
+        context_block = ""
+        if user_context.strip():
+            context_block = compact_prompt(
+                f"""
+                用户补充背景：{user_context.strip()}
+                可以帮助你理解本场辩论的特殊情境。
+                """
+            )
+        prompt = (
+            template.replace("{base_system_prompt}", base_prompt)
+            .replace("{stage}", stage_value)
+            .replace("{intensity}", intensity)
+            .replace("[可选焦点块]\n本场聚焦：{focus_name} — {focus_description}\n你的所有论证应紧扣此焦点展开。偏离焦点的论证，即使有道理，也会被判为降低得分。", focus_block)
+            .replace("[可选用户上下文块]\n用户补充背景：{user_context}\n可以帮助你理解本场辩论的特殊情境。", context_block)
+        )
+    else:
+        focus_block = ""
+        if selected_focus:
+            focus_block = compact_prompt(
+                f"""
+                This debate's focus: {selected_focus.name} — {selected_focus.description}
+                All your arguments should tightly revolve around this focus. Arguments that deviate — even if valid — will be scored lower.
+                """
+            )
+        context_block = ""
+        if user_context.strip():
+            context_block = compact_prompt(
+                f"""
+                User-provided background: {user_context.strip()}
+                Can help you understand the specific context of this debate.
+                """
+            )
+        prompt = (
+            template.replace("{base_system_prompt}", base_prompt)
+            .replace("{stage}", stage_value)
+            .replace("{intensity}", intensity)
+            .replace("[OPTIONAL FOCUS BLOCK]\nThis debate's focus: {focus_name} — {focus_description}\nAll your arguments should tightly revolve around this focus. Arguments that deviate — even if valid — will be scored lower.", focus_block)
+            .replace("[OPTIONAL USER CONTEXT BLOCK]\nUser-provided background: {user_context}\nCan help you understand the specific context of this debate.", context_block)
         )
 
-    context_block = ""
-    if user_context.strip():
-        context_block = (
-            f"\nScenario context: {user_context.strip()}\n"
-            "Treat it as background information, not as the user's position."
-        )
-
-    return compact_prompt(
-        f"""
-        {build_base_system_prompt(config)}
-
-        {stage_map.get(stage, stage_map[DebateStage.free_debate])}
-        {intensity_map.get(intensity, intensity_map["balanced"])}{focus_block}{context_block}
-        """
-    )
+    return apply_output_language_override(prompt, debate_language)
 
 
 def build_stage_turn_instruction(
     stage: DebateStage,
-    selected_focus: str = "",
+    selected_focus: FocusOption | None = None,
     user_context: str = "",
+    language: DebateLanguage | str = DebateLanguage.zh,
 ) -> str:
-    focus_instruction = ""
-    if selected_focus:
-        focus_instruction = (
-            f"\n必须显式回应讨论切面：{selected_focus}。"
-            "你可以支持、反驳、重定义或重新排序它，但不能忽略。"
-        )
+    debate_language = normalize_prompt_language(language)
+    if debate_language == DebateLanguage.zh:
+        heading_map = {
+            DebateStage.opening: "**开场陈词指令 (opening)**",
+            DebateStage.free_debate: "**自由辩论指令 (free_debate)**",
+            DebateStage.closing: "**总结陈词指令 (closing)**",
+        }
+    else:
+        heading_map = {
+            DebateStage.opening: "**Opening Statement Instruction (opening)**",
+            DebateStage.free_debate: "**Free Debate Instruction (free_debate)**",
+            DebateStage.closing: "**Closing Statement Instruction (closing)**",
+        }
+    prompt = get_named_code_block(10, debate_language, heading_map.get(stage, heading_map[DebateStage.free_debate]))
 
-    context_instruction = ""
-    if user_context.strip():
-        context_instruction = f"\n请把以下场景背景纳入推理：{user_context.strip()}"
-
-    if stage == DebateStage.opening:
-        body = (
-            "请给出开场陈词。明确你的核心判断、判定标准、关键因果链，"
-            "并预告你认为对手最可能依赖的脆弱前提。"
-        )
-    elif stage == DebateStage.closing:
-        body = (
-            "请给出总结陈词。必须回答：对手最强反驳是什么，你如何回应；"
-            "你在哪一点上被迫修正；以及为什么最终更应偏向你的观点。"
+    if debate_language == DebateLanguage.zh:
+        focus_instruction = ""
+        if selected_focus:
+            focus_instruction = f"请显式围绕讨论焦点“{selected_focus.name}”组织本轮发言。"
+        context_instruction = ""
+        if user_context.strip():
+            context_instruction = f"请把以下场景背景纳入推理：{user_context.strip()}"
+        prompt = (
+            prompt.replace("[焦点指令]", focus_instruction)
+            .replace("[场景指令]", context_instruction)
         )
     else:
-        body = (
-            "请给出本轮自由辩发言。优先处理最关键的冲突点。"
-            "本轮至少完成一项：拆掉对方一个前提、指出证据不足、打断因果链、"
-            "指出判定标准自相矛盾，或承认自己一个明显漏洞后用更强论点重建。"
+        focus_instruction = ""
+        if selected_focus:
+            focus_instruction = f"Keep this turn explicitly centered on the selected focus: {selected_focus.name}."
+        context_instruction = ""
+        if user_context.strip():
+            context_instruction = f"Incorporate this scenario background into your reasoning: {user_context.strip()}"
+        prompt = (
+            prompt.replace("[FOCUS INSTRUCTION]", focus_instruction)
+            .replace("[CONTEXT INSTRUCTION]", context_instruction)
         )
 
-    return compact_prompt(f"{body}{focus_instruction}{context_instruction}")
+    return apply_output_language_override(prompt, debate_language)
 
 
-def build_follow_up_system_prompt(config: DebaterConfig) -> str:
-    return compact_prompt(
-        f"""
-        You are debater {config.name}.
-        Background: {config.background}
-        Position: {config.stance}
-        Personality: {config.personality}
-        Speaking style: {config.speaking_style}
-
-        Requirements:
-        1. Stay consistent with your debate identity and position.
-        2. You may clarify or refine, but do not suddenly become neutral.
-        3. If the user's question misunderstands your earlier point, correct it first.
-        4. Keep the answer within 200 Chinese characters.
-        """
+def build_follow_up_system_prompt(
+    config: DebaterConfig,
+    language: DebateLanguage | str = DebateLanguage.zh,
+) -> str:
+    template = get_prompt_code_block(12, language)
+    prompt = (
+        template.replace("{config.name}", config.name)
+        .replace("{config.background}", config.background)
+        .replace("{config.stance}", config.stance)
+        .replace("{config.personality}", config.personality)
+        .replace("{config.speaking_style}", config.speaking_style)
     )
+    return apply_output_language_override(prompt, language)
 
 
-def build_follow_up_user_prompt(topic: str, own_positions: str, question: str) -> str:
-    return compact_prompt(
-        f"""
-        话题：{topic}
-
-        你在辩论中的主要观点：
-        {own_positions}
-
-        用户问题：{question}
-
-        请基于你的立场作答。
-        """
+def build_follow_up_user_prompt(
+    topic: str,
+    own_positions: str,
+    question: str,
+    language: DebateLanguage | str = DebateLanguage.zh,
+) -> str:
+    template = get_prompt_code_block(13, language)
+    prompt = (
+        template.replace("{topic}", topic)
+        .replace("{own_positions}", own_positions)
+        .replace("{question}", question)
     )
+    return apply_output_language_override(prompt, language)
 
 
-def append_optional_references(user_prompt: str, references: list[SearchResult]) -> str:
+def append_optional_references(
+    user_prompt: str,
+    references: list[SearchResult],
+    language: DebateLanguage | str = DebateLanguage.zh,
+) -> str:
     if not references:
         return user_prompt
 
     refs_text = "\n".join(f"- {ref.title}: {ref.snippet[:120]}" for ref in references)
-    return compact_prompt(
-        f"""
-        {user_prompt}
-
-        ## Optional Realtime References
-        {refs_text}
-
-        如果你使用这些材料，请让它们服务于你的论证，而不是机械复述。
-        """
-    )
+    debate_language = normalize_prompt_language(language)
+    template = get_prompt_code_block(14, debate_language)
+    if debate_language == DebateLanguage.zh:
+        prompt = (
+            template.replace("[原有提示词内容]", user_prompt)
+            .replace("{ref.title}: {ref.snippet[:120]}\n（继续列出每条参考资料...）", refs_text)
+        )
+    else:
+        prompt = (
+            template.replace("[Original prompt content]", user_prompt)
+            .replace("{ref.title}: {ref.snippet[:120]}\n(Continue listing each reference...)", refs_text)
+        )
+    return apply_output_language_override(prompt, debate_language)

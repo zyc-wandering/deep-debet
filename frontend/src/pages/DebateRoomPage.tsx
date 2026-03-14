@@ -69,6 +69,7 @@ export function DebateRoomPage({ onStop }: Props) {
   const phaseLabel = useDebateStore((s) => s.phaseLabel);
   const phaseDetail = useDebateStore((s) => s.phaseDetail);
   const debateDeadlineMs = useDebateStore((s) => s.debateDeadlineMs);
+  const debateLanguage = useDebateStore((s) => s.debateLanguage);
   const debaters = useDebateStore((s) => s.debaters);
   const lines = useDebateStore((s) => s.lines);
   const buffers = useDebateStore((s) => s.liveBuffers);
@@ -387,6 +388,10 @@ export function DebateRoomPage({ onStop }: Props) {
                 <strong>{selectedFocus?.name || "待选择"}</strong>
               </article>
               <article>
+                <span>辩论语言</span>
+                <strong>{debateLanguage === "zh" ? "中文" : "English"}</strong>
+              </article>
+              <article>
                 <span>交锋强度</span>
                 <strong>{intensityDraft}</strong>
               </article>
@@ -493,6 +498,10 @@ export function DebateRoomPage({ onStop }: Props) {
                     <div className="config-item">
                       <span className="config-label">讨论切面</span>
                       <span className="config-value">{selectedFocus?.name || selectedFocusId}</span>
+                    </div>
+                    <div className="config-item">
+                      <span className="config-label">辩论语言</span>
+                      <span className="config-value">{debateLanguage === "zh" ? "中文" : "English"}</span>
                     </div>
                     <div className="config-item">
                       <span className="config-label">交锋强度</span>

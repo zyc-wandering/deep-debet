@@ -284,7 +284,7 @@ export function useDebate() {
           return;
         }
 
-        useDebateStore.getState().start(payload.topic);
+        useDebateStore.getState().start(payload.topic, payload.debate_language);
         await runStream(`${apiBaseRef.current}/api/debate/start`, JSON.stringify(payload));
       },
       configure: async (payload: DebateConfigureRequest) => {

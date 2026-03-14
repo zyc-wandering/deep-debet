@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from textwrap import shorten
 from typing import List
 
-from app.models import DebateMessage
+from app.models import DebateLanguage, DebateMessage
 from app.prompts.context import render_context_window, render_rolling_summary
 
 
@@ -17,6 +17,7 @@ class ContextWindow:
     own_recent_messages: List[DebateMessage]
     recent_messages: List[DebateMessage]
     turn_instruction: str
+    language: DebateLanguage = DebateLanguage.zh
 
     def to_prompt(self) -> str:
         return render_context_window(
@@ -26,6 +27,7 @@ class ContextWindow:
             own_recent_messages=self.own_recent_messages,
             recent_messages=self.recent_messages,
             turn_instruction=self.turn_instruction,
+            language=self.language,
         )
 
 
@@ -42,6 +44,7 @@ class ContextManager:
         rolling_summary: str,
         messages: List[DebateMessage],
         turn_instruction: str,
+        language: DebateLanguage = DebateLanguage.zh,
     ) -> ContextWindow:
         recent = messages[-self.recent_window_size :]
         latest_other_messages = self._latest_message_per_other_speaker(messages, current_speaker)
@@ -54,9 +57,14 @@ class ContextManager:
             own_recent_messages=own_recent_messages,
             recent_messages=recent,
             turn_instruction=turn_instruction,
+            language=language,
         )
 
-    def refresh_rolling_summary(self, messages: List[DebateMessage]) -> str:
+    def refresh_rolling_summary(
+        self,
+        messages: List[DebateMessage],
+        language: DebateLanguage = DebateLanguage.zh,
+    ) -> str:
         if len(messages) <= self.recent_window_size:
             return ""
 
@@ -71,7 +79,7 @@ class ContextManager:
             for msg in speaker_messages[-2:]:
                 excerpt = shorten(msg.content.replace("\n", " "), width=120, placeholder="...")
                 entries_by_speaker[speaker].append((msg.turn_index, excerpt))
-        return render_rolling_summary(entries_by_speaker)
+        return render_rolling_summary(entries_by_speaker, language=language)
 
     def _latest_message_per_other_speaker(
         self,

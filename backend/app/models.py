@@ -33,6 +33,11 @@ class DebateModelVariant(str, Enum):
     pro = "pro"
 
 
+class DebateLanguage(str, Enum):
+    zh = "zh"
+    en = "en"
+
+
 class SearchResult(BaseModel):
     title: str
     url: str
@@ -102,6 +107,7 @@ class DebateStartRequest(BaseModel):
     time_limit_sec: int = Field(default=360, ge=60, le=1800)
     max_turns: int = Field(default=24, ge=4, le=80)
     enable_debater_search: bool = False
+    debate_language: DebateLanguage = DebateLanguage.zh
     model_variant: DebateModelVariant = DebateModelVariant.lite
     fun_mode: str = "persona_clash"
 
@@ -148,6 +154,7 @@ class DebateSession(BaseModel):
     session_id: str = Field(default_factory=lambda: str(uuid4()))
     topic: str
     model_variant: DebateModelVariant = DebateModelVariant.lite
+    debate_language: DebateLanguage = DebateLanguage.zh
     state: SessionState = SessionState.running
     started_at: datetime = Field(default_factory=utc_now)
     deadline_at: Optional[datetime] = None
