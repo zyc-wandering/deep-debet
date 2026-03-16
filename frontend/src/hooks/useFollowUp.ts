@@ -15,17 +15,12 @@ export function useFollowUp() {
 
   const submitFollowUp = useCallback(async (payload: FollowUpRequest) => {
     const store = useDebateStore.getState();
-
-    // Don't allow switching targets while streaming
-    if (store.isFollowUpStreaming) {
-      return;
-    }
+    if (store.isFollowUpStreaming) return;
 
     abortRef.current?.abort();
     const ctrl = new AbortController();
     abortRef.current = ctrl;
 
-    // Add message to store
     const messageId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     store.addFollowUpMessage({
       id: messageId,
@@ -46,32 +41,20 @@ export function useFollowUp() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
         onopen: async (response) => {
-          if (!response.ok) {
-            throw new Error(`Failed to connect: ${response.status}`);
-          }
+          if (!response.ok) throw new Error(`Failed to connect: ${response.status}`);
         },
         onmessage: async (msg) => {
           if (!msg.event) return;
           const data = (msg.data ? (JSON.parse(msg.data) as TraceAwarePayload) : {}) as TraceAwarePayload;
 
           if (msg.event === "follow_up_token") {
-            const tokenData = data as {
-              session_id: string;
-              follow_up_id: string;
-              target_role: string;
-              token: string;
-            };
+            const tokenData = data as { follow_up_id: string; token: string };
             useDebateStore.getState().appendFollowUpToken(tokenData.follow_up_id, tokenData.token);
             return;
           }
 
           if (msg.event === "follow_up_end") {
-            const endData = data as {
-              session_id: string;
-              follow_up_id: string;
-              target_role: string;
-              full_response: string;
-            };
+            const endData = data as { follow_up_id: string; full_response: string };
             useDebateStore.getState().finalizeFollowUp(endData.follow_up_id, endData.full_response);
             abortRef.current?.abort();
             abortRef.current = null;
@@ -86,18 +69,14 @@ export function useFollowUp() {
           }
         },
         onerror: (error) => {
-          if (ctrl.signal.aborted) {
-            return;
-          }
+          if (ctrl.signal.aborted) return;
           useDebateStore.getState().setError(error.message || "Connection error");
           useDebateStore.getState().setFollowUpStreaming(false);
           throw error;
         },
       });
     } catch (error) {
-      if (ctrl.signal.aborted) {
-        return;
-      }
+      if (ctrl.signal.aborted) return;
       const message = error instanceof Error ? error.message : "Connection error";
       useDebateStore.getState().setError(message);
       useDebateStore.getState().setFollowUpStreaming(false);

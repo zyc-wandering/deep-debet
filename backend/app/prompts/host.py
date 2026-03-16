@@ -91,6 +91,64 @@ def build_debater_generation_prompt(
     return apply_output_language_override(prompt, debate_language)
 
 
+def build_substitute_debaters_prompt(
+    topic: str,
+    brief: str,
+    existing_debaters: list[dict],
+    selected_focus: FocusOption | None = None,
+    intensity: str = "balanced",
+    substitute_count: int = 3,
+    language: DebateLanguage | str = DebateLanguage.zh,
+) -> str:
+    debate_language = normalize_prompt_language(language)
+    existing_summary = "\n".join(
+        f"- {d.get('name', '?')}: stance={d.get('stance', '?')}, background={d.get('background', '?')}"
+        for d in existing_debaters
+    )
+    focus_line = ""
+    if selected_focus:
+        focus_line = f"Discussion Focus: {selected_focus.name} — {selected_focus.description}"
+
+    if debate_language == DebateLanguage.zh:
+        prompt = compact_prompt(f"""
+你是一个辩论赛组织者。已为辩题「{topic}」选定了以下主力辩手：
+{existing_summary}
+
+现在需要额外设计 {substitute_count} 位**候选替补辩手**，供用户自由替换主力。
+{focus_line}
+辩论强度：{intensity}
+
+要求：
+1. 替补辩手的立场、背景、人格必须与已有主力辩手**显著不同**——提供全新的视角和论证路线。
+2. 可以包含跨学科、边缘化、少数派观点。
+3. 每位辩手包含 name, age, ethnicity, background, stance, personality, speaking_style, avatar_emoji 八个字段。
+4. 以 JSON 数组格式返回，不要添加任何额外说明。
+
+参考背景信息（截取）：
+{brief[:800]}
+""")
+    else:
+        prompt = compact_prompt(f"""
+You are a debate organizer. The following main debaters have been selected for the topic "{topic}":
+{existing_summary}
+
+Design {substitute_count} **substitute candidate debaters** that users can freely swap in.
+{focus_line}
+Debate intensity: {intensity}
+
+Requirements:
+1. Substitutes must have stances, backgrounds, and personalities **significantly different** from the main lineup — offer fresh perspectives and argumentation angles.
+2. May include cross-disciplinary, marginalized, or minority viewpoints.
+3. Each debater must include: name, age, ethnicity, background, stance, personality, speaking_style, avatar_emoji.
+4. Return as a JSON array only, no extra explanation.
+
+Background excerpt:
+{brief[:800]}
+""")
+
+    return apply_output_language_override(prompt, debate_language)
+
+
 def build_focus_options_prompt(
     topic: str,
     brief: str,

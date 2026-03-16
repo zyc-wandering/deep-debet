@@ -7,8 +7,6 @@ from pathlib import Path
 from threading import Lock
 from typing import Any, Dict
 
-from app.config import settings
-
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -35,14 +33,25 @@ class TraceEnvelope:
 
 
 class TraceStore:
-    def __init__(self, trace_dir: Path | None = None) -> None:
-        self.trace_dir = trace_dir or settings.trace_dir
+    def __init__(self) -> None:
         self._seq_by_session: dict[str, int] = {}
         self._locks: dict[str, Lock] = {}
+        self._paths: dict[str, Path] = {}
+
+    def set_debate_dir(self, session_id: str, debate_dir: Path | str) -> None:
+        """Register the debate directory for a session's trace file."""
+        debate_dir = Path(debate_dir)
+        debate_dir.mkdir(parents=True, exist_ok=True)
+        self._paths[session_id] = debate_dir / "trace.jsonl"
 
     def path_for(self, session_id: str) -> Path:
-        self.trace_dir.mkdir(parents=True, exist_ok=True)
-        return self.trace_dir / f"{session_id}.jsonl"
+        """Return the trace file path for a session."""
+        if session_id in self._paths:
+            return self._paths[session_id]
+        # Fallback (should not happen after refactor)
+        from app.config import settings
+        settings.debates_dir.mkdir(parents=True, exist_ok=True)
+        return settings.debates_dir / f"{session_id}_trace.jsonl"
 
     def append_sse_event(
         self,

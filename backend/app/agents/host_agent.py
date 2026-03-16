@@ -22,6 +22,7 @@ from app.prompts.host import (
     build_markdown_repair_prompt,
     build_research_prompt,
     build_structured_summary_prompt,
+    build_substitute_debaters_prompt,
     build_summary_prompt,
     get_host_system_prompt,
 )
@@ -137,6 +138,35 @@ class HostAgent:
         if len(configs) < debater_count:
             raise ValueError(f"Expected {debater_count} debaters, got {len(configs)}")
         return configs[:debater_count]
+
+    async def create_substitute_debaters(
+        self,
+        topic: str,
+        brief: str,
+        existing_debaters: List[DebaterConfig],
+        selected_focus: FocusOption | None = None,
+        intensity: str = "balanced",
+        substitute_count: int = 3,
+    ) -> List[DebaterConfig]:
+        """Generate substitute debaters that offer perspectives different from the main lineup."""
+        existing_dicts = [d.model_dump() for d in existing_debaters]
+        data = await self._chat_json_array(
+            user_prompt=build_substitute_debaters_prompt(
+                topic=topic,
+                brief=brief,
+                existing_debaters=existing_dicts,
+                selected_focus=selected_focus,
+                intensity=intensity,
+                substitute_count=substitute_count,
+                language=self.debate_language,
+            ),
+            schema_description=(
+                "返回 JSON 数组；每个元素必须包含 name, age, ethnicity, background, stance, "
+                "personality, speaking_style, avatar_emoji 八个字段。"
+            ),
+        )
+        configs = [DebaterConfig(**row) for row in data[:substitute_count]]
+        return configs
 
     async def summarize_debate(
         self,
@@ -353,10 +383,15 @@ class HostAgent:
                 report.host_conclusion = repaired_dict
             except Exception:
                 report.host_conclusion = repaired
+            conclusion_preview = (
+                str(report.host_conclusion)[:200]
+                if not isinstance(report.host_conclusion, str)
+                else report.host_conclusion[:200]
+            )
             debate_logger.info(
                 "Host conclusion repaired",
                 event_type="host_conclusion_repaired",
-                original_conclusion=report.host_conclusion[:200],
+                original_conclusion=conclusion_preview,
                 repaired_conclusion=repaired[:200],
             )
         debate_logger.info(
@@ -403,11 +438,30 @@ class HostAgent:
                 yield char
                 await asyncio.sleep(0.005)
 
-    async def _chat_required_text(self, user_prompt: str) -> str:
-        text = (await self.llm.chat(self._system_prompt(), user_prompt)).strip()
-        if not text:
-            raise ValueError("Empty LLM response")
-        return text
+    async def _chat_required_text(self, user_prompt: str, *, max_retries: int = 2) -> str:
+        last_exc: Exception | None = None
+        for attempt in range(max_retries + 1):
+            try:
+                text = (await self.llm.chat(self._system_prompt(), user_prompt)).strip()
+                if text:
+                    return text
+                last_exc = ValueError("Empty LLM response")
+                debate_logger.warning(
+                    f"Empty LLM response (attempt {attempt + 1}/{max_retries + 1}), retrying…",
+                    event_type="llm_empty_response_retry",
+                    attempt=attempt + 1,
+                )
+            except Exception as exc:
+                last_exc = exc
+                debate_logger.warning(
+                    f"LLM call failed (attempt {attempt + 1}/{max_retries + 1}): {exc}",
+                    event_type="llm_call_retry",
+                    attempt=attempt + 1,
+                    error=str(exc),
+                )
+            if attempt < max_retries:
+                await asyncio.sleep(1.5 * (attempt + 1))
+        raise last_exc or ValueError("Empty LLM response after retries")
 
     async def _chat_markdown_with_requirements(
         self,

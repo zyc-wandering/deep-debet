@@ -42,39 +42,56 @@ class FakeSearch(SearchProvider):
 
 
 class FakeImageService:
-    async def generate_debate_background(self, topic: str, debaters: list[dict], session_id: str):
+    async def generate_debate_background(self, topic, debaters, session_id, debate_dir=None):
         return None
 
-    async def generate_debater_avatar(self, debater: dict, session_id: str):
+    async def generate_debater_avatar(self, debater, session_id, debate_dir=None):
         return None
 
-    async def generate_summary_image(self, topic: str, debaters: list[dict], session_id: str):
+    async def generate_summary_image(self, topic, debaters, session_id, debate_dir=None):
         return None
 
 
-def make_orchestrator(tmp_path):
+def make_orchestrator(tmp_path, monkeypatch=None):
+    if monkeypatch:
+        from app.config import settings
+        debates_dir = tmp_path / "debates"
+        debates_dir.mkdir(exist_ok=True)
+        object.__setattr__(settings, "debates_dir", debates_dir)
+
+        _counter = [0]
+        def fake_create_debate_dir(topic: str):
+            _counter[0] += 1
+            d = debates_dir / f"test-debate-{_counter[0]}"
+            d.mkdir(parents=True, exist_ok=True)
+            (d / "images").mkdir(exist_ok=True)
+            return d
+
+        import app.orchestrator as orch_module
+        monkeypatch.setattr(orch_module, "create_debate_dir", fake_create_debate_dir)
+
     return DebateOrchestrator(
         llm=FakeLLM(),
         search=FakeSearch(),
-        session_store=SessionStore(sessions_dir=tmp_path / "sessions"),
-        report_writer=ReportWriter(reports_dir=tmp_path / "reports"),
+        session_store=SessionStore(),
+        report_writer=ReportWriter(),
         image_service=FakeImageService(),
     )
 
 
 @pytest.mark.anyio
 async def test_closing_stage_emits_stage_change_without_model_init_error(tmp_path):
-    """Test that ClosingStageExecutor correctly emits stage events.
+    """Test that ClosingStageExecutor correctly emits stage events."""
+    debate_dir = tmp_path / "test-debate"
+    debate_dir.mkdir()
 
-    This test verifies the new stage-based architecture where closing stage
-    logic is encapsulated in ClosingStageExecutor rather than the orchestrator.
-    """
     session = DebateSession(
         topic="Test topic",
         deadline_at=utc_now() + timedelta(minutes=5),
         max_turns=4,
+        debate_dir=str(debate_dir),
     )
-    store = SessionStore(sessions_dir=tmp_path / "sessions")
+    store = SessionStore()
     store.create(session)
 
     turn_executor = DebaterTurnExecutor()
@@ -119,11 +136,9 @@ async def test_closing_stage_emits_stage_change_without_model_init_error(tmp_pat
     events = []
     async for event in closing_stage.execute(ctx):
         events.append(event)
-        # Update session from events (simulating what orchestrator does)
         if event.event == "debate_turn_end":
             store.update(session)
 
-    # Verify that the stage executor produced the expected events
     assert len([e for e in events if e.event == "debate_turn_start"]) == 2
     assert len([e for e in events if e.event == "debate_token"]) > 0
     assert len([e for e in events if e.event == "debate_turn_end"]) == 2
@@ -131,7 +146,7 @@ async def test_closing_stage_emits_stage_change_without_model_init_error(tmp_pat
 
 @pytest.mark.anyio
 async def test_start_stops_after_focus_options_ready_without_debaters(monkeypatch, tmp_path):
-    orchestrator = make_orchestrator(tmp_path)
+    orchestrator = make_orchestrator(tmp_path, monkeypatch)
     focus_options = [
         FocusOption(name="成长性", description="长期成长与积累"),
         FocusOption(name="执行风险", description="现实执行成本与风险"),
@@ -165,6 +180,7 @@ async def test_start_stops_after_focus_options_ready_without_debaters(monkeypatc
     assert session.state == "configuring"
     assert session.debate_language == DebateLanguage.en
     assert session.deadline_at is None
+    assert session.debate_dir is not None
     assert [event.event for event in events] == ["phase", "phase", "host_research", "focus_options_ready", "phase"]
     assert all(event.event != "debaters_ready" for event in events)
     assert [option.name for option in session.focus_options] == ["成长性", "执行风险"]
@@ -172,7 +188,7 @@ async def test_start_stops_after_focus_options_ready_without_debaters(monkeypatc
 
 @pytest.mark.anyio
 async def test_configure_sets_deadline_persists_config_and_finishes_run(monkeypatch, tmp_path):
-    orchestrator = make_orchestrator(tmp_path)
+    orchestrator = make_orchestrator(tmp_path, monkeypatch)
     focus_options = [
         FocusOption(id="focus-growth", name="成长性", description="长期成长与积累"),
         FocusOption(id="focus-risk", name="执行风险", description="现实执行成本与风险"),
@@ -260,9 +276,13 @@ async def test_configure_sets_deadline_persists_config_and_finishes_run(monkeypa
     assert any(event.event == "debaters_ready" for event in configure_events)
     assert configure_events[-1].event == "done"
     assert session.report_path is not None
-    assert list((tmp_path / "reports").glob("*.md"))
 
-    persisted = json.loads((tmp_path / "sessions" / f"{session_id}.json").read_text(encoding="utf-8"))
+    # Report should be in the debate directory
+    debate_dir = Path(session.debate_dir)
+    assert (debate_dir / "report.md").exists()
+
+    # Session should be persisted in the debate directory
+    persisted = json.loads((debate_dir / "session.json").read_text(encoding="utf-8"))
     assert persisted["pre_debate_config"]["selected_focus_id"] == "focus-growth"
     assert persisted["pre_debate_config"]["intensity"] == "intense"
     assert persisted["pre_debate_config"]["user_context"] == "I already have one offer in hand."
@@ -270,11 +290,16 @@ async def test_configure_sets_deadline_persists_config_and_finishes_run(monkeypa
 
 @pytest.mark.anyio
 async def test_execute_debate_stages_still_runs_summary_after_stop_requested(monkeypatch, tmp_path):
-    orchestrator = make_orchestrator(tmp_path)
+    orchestrator = make_orchestrator(tmp_path, monkeypatch)
+
+    debate_dir = tmp_path / "debates" / "test-stop-debate"
+    debate_dir.mkdir(parents=True, exist_ok=True)
+
     session = DebateSession(
         topic="Should I change jobs?",
         max_turns=4,
         stop_requested=True,
+        debate_dir=str(debate_dir),
     )
 
     async def fake_structured_summary(self, topic: str, brief: str, messages, references):
@@ -307,7 +332,7 @@ async def test_execute_debate_stages_still_runs_summary_after_stop_requested(mon
     assert any(event.event == "host_summary" for event in events)
     assert any(event.event == "structured_report" for event in events)
     assert session.report_path is not None
-    report_path = tmp_path / "reports" / Path(session.report_path).name
+    report_path = Path(session.report_path)
     assert report_path.exists()
     assert report_path.read_text(encoding="utf-8") == "# report"
 
@@ -320,11 +345,7 @@ from app.models import SSEEvent
 
 
 class CustomTestStage(DebateStageExecutor):
-    """A custom stage implementation to demonstrate extensibility.
-
-    This shows how new debate stages can be added by implementing
-    the DebateStageExecutor interface.
-    """
+    """A custom stage implementation to demonstrate extensibility."""
 
     def __init__(self, message: str = "Custom stage executed") -> None:
         self.message = message
@@ -343,7 +364,6 @@ class CustomTestStage(DebateStageExecutor):
         return "A test stage to verify extensibility"
 
     async def execute(self, ctx: StageContext) -> AsyncGenerator[SSEEvent, None]:
-        """Execute the custom stage - emits a simple event."""
         self.executed = True
         yield SSEEvent(
             event="custom_event",
@@ -355,26 +375,21 @@ class CustomTestStage(DebateStageExecutor):
         )
 
     def should_advance(self, ctx: StageContext) -> bool:
-        """Always advance after custom stage."""
         return True
 
 
 @pytest.mark.anyio
 async def test_stage_registry_extensibility():
-    """Test that new stages can be registered and executed."""
     from app.stage.stage_registry import StageRegistry
 
     registry = StageRegistry()
     custom_stage = CustomTestStage("Test message")
 
-    # Register the custom stage
     registry.register(custom_stage)
 
-    # Verify registration
     assert "custom_test" in registry.list_stages()
     assert registry.get("custom_test") == custom_stage
 
-    # Create pipeline with custom stage
     pipeline = registry.create_pipeline(["custom_test"])
     assert len(pipeline) == 1
     assert pipeline[0] == custom_stage
@@ -382,13 +397,16 @@ async def test_stage_registry_extensibility():
 
 @pytest.mark.anyio
 async def test_custom_stage_execution(tmp_path):
-    """Test that a custom stage can be executed within a debate context."""
+    debate_dir = tmp_path / "test-debate"
+    debate_dir.mkdir()
+
     session = DebateSession(
         topic="Test extensibility",
         deadline_at=utc_now() + timedelta(minutes=5),
         max_turns=4,
+        debate_dir=str(debate_dir),
     )
-    store = SessionStore(sessions_dir=tmp_path / "sessions")
+    store = SessionStore()
     store.create(session)
 
     custom_stage = CustomTestStage("Extensibility test")
@@ -422,7 +440,6 @@ async def test_custom_stage_execution(tmp_path):
     async for event in custom_stage.execute(ctx):
         events.append(event)
 
-    # Verify custom stage executed correctly
     assert custom_stage.executed
     assert len(events) == 1
     assert events[0].event == "custom_event"
@@ -433,16 +450,13 @@ async def test_custom_stage_execution(tmp_path):
 
 @pytest.mark.anyio
 async def test_stage_registry_create_pipeline_with_missing_stages():
-    """Test that pipeline creation gracefully handles missing stage types."""
     from app.stage.stage_registry import StageRegistry
 
     registry = StageRegistry()
     custom_stage = CustomTestStage()
     registry.register(custom_stage)
 
-    # Request pipeline with both existing and non-existing stages
     pipeline = registry.create_pipeline(["custom_test", "non_existent", "custom_test"])
 
-    # Only existing stages should be included
     assert len(pipeline) == 2
     assert all(isinstance(stage, CustomTestStage) for stage in pipeline)

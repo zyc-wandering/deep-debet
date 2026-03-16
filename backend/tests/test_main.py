@@ -28,12 +28,16 @@ def _read_sse_events(response):
 
 
 def test_configure_returns_400_for_invalid_focus_option(tmp_path, monkeypatch):
-    store = SessionStore(sessions_dir=tmp_path / "sessions")
+    store = SessionStore()
     monkeypatch.setattr(main_module, "session_store", store)
+
+    debate_dir = tmp_path / "test-debate"
+    debate_dir.mkdir()
 
     session = DebateSession(
         topic="Should I change jobs?",
         max_turns=24,
+        debate_dir=str(debate_dir),
         focus_options=[
             FocusOption(id="focus-growth", name="成长性", description="长期成长与积累"),
             FocusOption(id="focus-risk", name="执行风险", description="现实执行成本与风险"),
@@ -59,10 +63,27 @@ def test_configure_returns_400_for_invalid_focus_option(tmp_path, monkeypatch):
 
 
 def test_start_stream_includes_trace_metadata_and_journal(tmp_path, monkeypatch):
-    store = SessionStore(sessions_dir=tmp_path / "sessions")
-    traces = TraceStore(trace_dir=tmp_path / "traces")
+    store = SessionStore()
+    traces = TraceStore()
     monkeypatch.setattr(main_module, "session_store", store)
     monkeypatch.setattr(main_module, "trace_store", traces)
+
+    # Point debates_dir to tmp_path
+    from app.config import settings
+    debates_dir = tmp_path / "debates"
+    debates_dir.mkdir()
+    object.__setattr__(settings, "debates_dir", debates_dir)
+
+    _counter = [0]
+    def fake_create_debate_dir(topic: str):
+        _counter[0] += 1
+        d = debates_dir / f"test-debate-{_counter[0]}"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "images").mkdir(exist_ok=True)
+        return d
+
+    import app.orchestrator as orch_module
+    monkeypatch.setattr(orch_module, "create_debate_dir", fake_create_debate_dir)
 
     async def fake_research(self, topic: str):
         return "brief", []

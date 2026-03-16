@@ -8,6 +8,7 @@ from typing import AsyncGenerator, List, Optional
 from app.agents.context_manager import ContextManager
 from app.agents.debater_agent import DebaterAgent
 from app.agents.host_agent import HostAgent
+from app.config import create_debate_dir
 from app.execution.turn_executor import DebaterTurnExecutor
 from app.models import (
     DebaterConfig,
@@ -89,6 +90,10 @@ class DebateOrchestrator:
         """Start a session and stop after host research plus focus selection."""
         start_time = monotonic()
         host = HostAgent(self.llm, self.search, debate_language=request.debate_language)
+
+        # Create per-debate directory for all artifacts
+        debate_dir = create_debate_dir(request.topic)
+
         session = DebateSession(
             topic=request.topic,
             model_variant=request.model_variant,
@@ -99,6 +104,7 @@ class DebateOrchestrator:
             max_turns=request.max_turns,
             enable_debater_search=request.enable_debater_search,
             fun_mode=request.fun_mode,
+            debate_dir=str(debate_dir),
         )
         self.session_store.create(session)
 
@@ -283,16 +289,56 @@ class DebateOrchestrator:
                 session.deadline_at = utc_now() + timedelta(seconds=session.time_limit_sec)
                 self.session_store.update(session)
 
+                main_count = len(debaters)
+
+                # Generate substitute debaters concurrently with images
+                debate_logger.info("Creating substitute debaters", event_type="create_subs_start")
+                sub_task = asyncio.create_task(
+                    host.create_substitute_debaters(
+                        topic=session.topic,
+                        brief=session.brief,
+                        existing_debaters=debaters,
+                        selected_focus=selected_focus,
+                        intensity=request.pre_debate_config.intensity,
+                        substitute_count=3,
+                    )
+                )
+
+                # Start avatar generation for main debaters
                 avatar_tasks = [
-                    asyncio.create_task(self._generate_avatar_with_event(debater, session.session_id))
+                    asyncio.create_task(self._generate_avatar_with_event(debater, session.session_id, session.debate_dir))
                     for debater in debaters
                 ]
 
+                # Wait for substitutes (needed for debaters_ready event)
+                try:
+                    substitutes = await sub_task
+                    debate_logger.info(
+                        "Substitute debaters created",
+                        event_type="create_subs_complete",
+                        substitute_count=len(substitutes),
+                        sub_names=[s.name for s in substitutes],
+                    )
+                except Exception as exc:
+                    debate_logger.warning(
+                        f"Substitute debater generation failed: {exc}",
+                        event_type="create_subs_failed",
+                    )
+                    substitutes = []
+
+                # Start avatar generation for substitutes too
+                sub_avatar_tasks = [
+                    asyncio.create_task(self._generate_avatar_with_event(sub, session.session_id, session.debate_dir))
+                    for sub in substitutes
+                ]
+
+                all_debaters = debaters + substitutes
                 yield SSEEvent(
                     event="debaters_ready",
                     data=with_trace_metadata({
                         "session_id": session.session_id,
-                        "debaters": [debater.model_dump() for debater in debaters],
+                        "debaters": [d.model_dump() for d in all_debaters],
+                        "main_count": main_count,
                         "topic": session.topic,
                         "time_limit_sec": session.time_limit_sec,
                         "max_turns": session.max_turns,
@@ -300,40 +346,13 @@ class DebateOrchestrator:
                     }),
                 )
 
-                yield self._phase_event(
-                    session.session_id,
-                    "generating_background",
-                    "Generating background",
-                    "Preparing debate imagery for the configured session.",
-                )
-
-                debate_logger.image_generation_request("background", {"topic": session.topic})
-                img_start = monotonic()
-                with debate_logger.span_context("image:background"):
-                    background_path = await self.image_service.generate_debate_background(
-                        session.topic,
-                        [debater.model_dump() for debater in debaters],
-                        session.session_id,
-                    )
-                debate_logger.image_generation_response(
-                    "background",
-                    duration_sec=monotonic() - img_start,
-                    success=background_path is not None,
-                    path=background_path,
-                )
-                if background_path:
-                    yield SSEEvent(
-                        event="background_ready",
-                        data=with_trace_metadata(
-                            {"session_id": session.session_id, "background_path": background_path}
-                        ),
-                    )
-
-                avatar_results = await asyncio.gather(*avatar_tasks, return_exceptions=True)
+                # Await all avatars (main + substitute)
+                all_avatar_tasks = avatar_tasks + sub_avatar_tasks
+                avatar_results = await asyncio.gather(*all_avatar_tasks, return_exceptions=True)
                 avatars: dict[str, str] = {}
                 for index, result in enumerate(avatar_results):
                     if isinstance(result, str):
-                        avatars[debaters[index].name] = result
+                        avatars[all_debaters[index].name] = result
 
                 yield SSEEvent(
                     event="avatars_ready",
@@ -366,28 +385,6 @@ class DebateOrchestrator:
                 ):
                     yield event
 
-                # Generate summary image
-                yield self._phase_event(
-                    session.session_id,
-                    "generating_summary_image",
-                    "Generating summary image",
-                    "Rendering the final visual summary.",
-                )
-                debate_logger.image_generation_request("summary", {"topic": session.topic})
-                img_start = monotonic()
-                with debate_logger.span_context("image:summary"):
-                    summary_image_path = await self.image_service.generate_summary_image(
-                        session.topic,
-                        [debater.model_dump() for debater in debaters],
-                        session.session_id,
-                    )
-                debate_logger.image_generation_response(
-                    "summary",
-                    duration_sec=monotonic() - img_start,
-                    success=summary_image_path is not None,
-                    path=summary_image_path,
-                )
-
                 duration_sec = int(monotonic() - start_clock)
                 final_state = SessionState.done if not session.stop_requested else SessionState.stopped
                 old_state = session.state
@@ -411,7 +408,6 @@ class DebateOrchestrator:
                     data=with_trace_metadata({
                         "session_id": session.session_id,
                         "report_path": str(session.report_path) if session.report_path else "",
-                        "summary_image_path": summary_image_path,
                         "total_turns": len(session.messages),
                         "duration_sec": duration_sec,
                         "trace_journal_path": session.trace_journal_path,
@@ -795,7 +791,7 @@ class DebateOrchestrator:
             }),
         )
 
-    async def _generate_avatar_with_event(self, debater: DebaterConfig, session_id: str) -> str | None:
+    async def _generate_avatar_with_event(self, debater: DebaterConfig, session_id: str, debate_dir: str | None = None) -> str | None:
         """Generate avatar for a debater."""
         debate_logger.image_generation_request(
             "avatar",
@@ -803,7 +799,7 @@ class DebateOrchestrator:
         )
         start = monotonic()
         try:
-            path = await self.image_service.generate_debater_avatar(debater.model_dump(), session_id)
+            path = await self.image_service.generate_debater_avatar(debater.model_dump(), session_id, debate_dir=debate_dir)
             debate_logger.image_generation_response(
                 "avatar",
                 duration_sec=monotonic() - start,

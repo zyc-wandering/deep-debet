@@ -4,13 +4,11 @@ import json
 from pathlib import Path
 from typing import Dict, Optional
 
-from app.config import settings
 from app.models import DebateSession, SessionState
 
 
 class SessionStore:
-    def __init__(self, sessions_dir: Path | None = None) -> None:
-        self.sessions_dir = sessions_dir or settings.sessions_dir
+    def __init__(self) -> None:
         self._sessions: Dict[str, DebateSession] = {}
 
     def create(self, session: DebateSession) -> DebateSession:
@@ -39,7 +37,9 @@ class SessionStore:
         session = self._sessions.get(session_id)
         if not session:
             return
-        self.sessions_dir.mkdir(parents=True, exist_ok=True)
-        path = self.sessions_dir / f"{session_id}.json"
+        if not session.debate_dir:
+            return
+        debate_dir = Path(session.debate_dir)
+        debate_dir.mkdir(parents=True, exist_ok=True)
+        path = debate_dir / "session.json"
         path.write_text(session.model_dump_json(indent=2), encoding="utf-8")
-

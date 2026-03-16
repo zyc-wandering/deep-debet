@@ -6,7 +6,6 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse, StreamingResponse, FileResponse
-from fastapi.staticfiles import StaticFiles
 
 from app.config import ensure_directories, settings
 from app.execution.turn_executor import DebaterTurnExecutor
@@ -37,10 +36,6 @@ from app.utils.logger import debate_logger
 
 ensure_directories()
 
-# Ensure images directory exists
-images_dir = settings.data_dir / "images"
-images_dir.mkdir(parents=True, exist_ok=True)
-
 app = FastAPI(title=settings.app_name)
 app.add_middleware(
     CORSMiddleware,
@@ -49,9 +44,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Mount static files for images
-app.mount("/api/images", StaticFiles(directory=str(images_dir)), name="images")
 
 # Global singleton dependencies
 search_provider = TavilySearchProvider()
@@ -151,6 +143,10 @@ def _serialize_traced_event(evt, store: SessionStore) -> str:
 
     session = store.get(session_id)
     trace_id = session.trace_id if session else session_id
+
+    # Ensure trace store knows the debate directory
+    if session and session.debate_dir:
+        trace_store.set_debate_dir(session_id, session.debate_dir)
     trace_ctx = payload.get("_trace", {}) if isinstance(payload.get("_trace"), dict) else {}
     envelope = trace_store.append_sse_event(
         session_id=session_id,
@@ -288,13 +284,24 @@ async def read_report(
     return safe.read_text(encoding="utf-8")
 
 
-@app.get("/api/images/{filename}")
-async def get_image(filename: str) -> FileResponse:
-    """Serve generated images."""
-    image_path = images_dir / filename
-    # Security check: ensure file is within images_dir
+@app.get("/api/images/{path:path}")
+async def get_image(path: str) -> FileResponse:
+    """Serve generated images from debate directories.
+
+    Accepts either:
+    - An absolute path to an image file (validated within debates_dir)
+    - A relative path like {debate_folder}/images/{filename}
+    """
+    # Try as absolute path first
+    image_path = Path(path)
+    if not image_path.is_absolute():
+        image_path = settings.debates_dir / path
+
+    image_path = image_path.resolve()
+
+    # Security check: must be within debates_dir
     try:
-        image_path.relative_to(images_dir)
+        image_path.relative_to(settings.debates_dir.resolve())
     except ValueError:
         raise HTTPException(status_code=403, detail="Invalid path")
 
@@ -304,7 +311,7 @@ async def get_image(filename: str) -> FileResponse:
     return FileResponse(
         str(image_path),
         media_type="image/png",
-        filename=filename,
+        filename=image_path.name,
     )
 
 

@@ -1,43 +1,27 @@
-export type DebateEventType =
-  | "phase"
-  | "host_research"
-  | "focus_options_ready"
-  | "debaters_ready"
-  | "background_ready"
-  | "avatars_ready"
-  | "stage_change" // Debate stage changed (opening/free/closing)
-  | "debate_turn_start"
-  | "debate_token"
-  | "debate_turn_end"
-  | "host_summary"
-  | "structured_report" // Structured report data available
-  | "follow_up_token" // Follow-up response streaming
-  | "follow_up_end" // Follow-up response complete
-  | "done"
-  | "error";
+/* ── UI Phase (5-phase flow) ── */
+export type Phase = "config" | "research" | "drafting" | "arena" | "summary";
 
+/* ── Backend phases (SSE "phase" event) ── */
 export type DebatePhase =
   | "idle"
   | "booting"
   | "researching"
+  | "configuring"
   | "assembling"
   | "generating_background"
-  | "configuring" // Pre-debate configuration
-  | "opening" // Opening statements
-  | "free_debate" // Main debate
-  | "closing" // Closing statements
+  | "opening"
+  | "free_debate"
+  | "closing"
   | "summarizing"
   | "generating_summary_image"
   | "complete"
-  | "follow_up" // Post-debate Q&A
+  | "follow_up"
   | "error";
 
-// Explicit debate stages for structured debate flow
 export type DebateStage = "opening" | "free_debate" | "closing" | "summary";
 export type DebateLanguage = "zh" | "en";
 
-export type DebateRoomTab = "config" | "host" | "debate" | "summary";
-
+/* ── Backend data models ── */
 export interface DebaterConfig {
   id: string;
   name: string;
@@ -63,28 +47,25 @@ export interface PreDebateConfig {
   user_context: string;
 }
 
-// Follow-up message in post-debate Q&A
 export interface FollowUpMessage {
   id: string;
-  target_role: string; // "host" or debater name
+  target_role: string;
   question: string;
   response: string;
   created_at: string;
   isStreaming?: boolean;
 }
 
-// Argument node for structured report
 export interface ArgumentNode {
   id: string;
   speaker: string;
   content: string;
   turn_index: number;
-  targets: string[]; // IDs of nodes this responds to
+  targets: string[];
   status: "claim" | "support" | "attack" | "concession";
   focal_point?: string;
 }
 
-// Structured report data
 export interface StructuredReport {
   background_summary: string;
   core_arguments: Array<{
@@ -101,19 +82,13 @@ export interface StructuredReport {
   argument_nodes: ArgumentNode[];
 }
 
-export interface DebateImages {
-  background?: string;
-  summary?: string;
-  avatars: Record<string, string>;
-}
-
 export interface DebateLine {
   key: string;
   speaker: string;
   content: string;
   turnId: number;
   isLive?: boolean;
-  stage?: DebateStage; // Which debate stage this line belongs to
+  stage?: DebateStage;
 }
 
 export interface PreparingTurn {
@@ -130,6 +105,7 @@ export interface WorkflowActivity {
   at: number;
 }
 
+/* ── API request/response types ── */
 export interface DebateStartRequest {
   topic: string;
   debater_count: number;
@@ -150,4 +126,24 @@ export interface FollowUpRequest {
   session_id: string;
   target_role: string;
   question: string;
+}
+
+/* ── UI-only config (ConfigPhase form state) ── */
+export interface DebateConfig {
+  topic: string;
+  language: DebateLanguage;
+  numDebaters: number;
+  maxRounds: number;
+  modelVariant: "lite" | "pro";
+  enableSearch: boolean;
+}
+
+/* ── Arena transcript message ── */
+export interface TranscriptMessage {
+  id: string;
+  timestamp: Date;
+  speaker: string;
+  content: string;
+  stage: DebateStage;
+  turnId: number;
 }

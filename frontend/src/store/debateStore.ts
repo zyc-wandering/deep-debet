@@ -1,60 +1,65 @@
 import { create } from "zustand";
 import {
-  DebateImages,
+  Phase,
   DebateLine,
   DebateLanguage,
   DebaterConfig,
   DebatePhase,
-  DebateRoomTab,
   DebateStage,
   FollowUpMessage,
   FocusOption,
   PreparingTurn,
   StructuredReport,
   WorkflowActivity,
+  TranscriptMessage,
 } from "../types";
 
 type RunStatus = "idle" | "running" | "done" | "error";
 
 interface DebateState {
-  // Page navigation
-  currentTab: DebateRoomTab;
-
-  status: RunStatus;
-  phase: DebatePhase;
+  // 5-phase UI state
+  phase: Phase;
+  backendPhase: DebatePhase;
   phaseLabel: string;
   phaseDetail: string;
+
+  status: RunStatus;
   topic: string;
   debateLanguage: DebateLanguage;
   sessionId: string;
   debateDeadlineMs: number | null;
+
+  // Research
   hostResearch: string;
-  hostSummary: string;
-  debaters: DebaterConfig[];
-  lines: DebateLine[];
-  liveBuffers: Record<string, { content: string; stage?: DebateStage }>;
-  reportPath: string;
-  reportMarkdown: string;
-  structuredReport: StructuredReport | null;
-  errorMessage: string;
-  activities: WorkflowActivity[];
-  activeSpeaker: string;
-  activeTurnId: number | null;
-  preparingTurn: PreparingTurn | null;
-
-  // Stage tracking
-  currentStage: DebateStage | null;
-  stageLines: Record<DebateStage, DebateLine[]>;
-
-  // Images
-  images: DebateImages;
-
-  // Phase 3 configuration
   focusOptions: FocusOption[];
   selectedFocusId: string;
   intensityDraft: "mild" | "balanced" | "intense";
   userContextDraft: string;
   isConfigurationReady: boolean;
+
+  // Drafting
+  debaters: DebaterConfig[];
+  substituteDebaters: DebaterConfig[];
+
+  // Arena
+  hostSummary: string;
+  lines: DebateLine[];
+  liveBuffers: Record<string, { content: string; stage?: DebateStage }>;
+  activeSpeaker: string;
+  activeTurnId: number | null;
+  preparingTurn: PreparingTurn | null;
+  currentStage: DebateStage | null;
+  stageLines: Record<string, DebateLine[]>;
+  transcript: TranscriptMessage[];
+
+  // Summary
+  reportPath: string;
+  reportMarkdown: string;
+  structuredReport: StructuredReport | null;
+
+  // Misc
+  errorMessage: string;
+  activities: WorkflowActivity[];
 
   // Follow-up
   followUpMessages: FollowUpMessage[];
@@ -62,34 +67,35 @@ interface DebateState {
   followUpTarget: string | null;
   isFollowUpStreaming: boolean;
 
-  // Navigation
-  setTab(tab: DebateRoomTab): void;
-
-  // Debate actions
+  // Actions
+  setPhase(phase: Phase): void;
   start(topic: string, debateLanguage: DebateLanguage): void;
   setSessionId(sessionId: string): void;
-  setPhase(phase: DebatePhase, label: string, detail?: string): void;
+  setBackendPhase(phase: DebatePhase, label: string, detail?: string): void;
   setStage(stage: DebateStage): void;
   addActivity(title: string, detail?: string, tone?: WorkflowActivity["tone"]): void;
   appendHostResearch(chunk: string): void;
-  setDebaters(sessionId: string, debaters: DebaterConfig[], debateDeadlineMs: number | null): void;
-  setBackgroundImage(path: string): void;
-  setAvatarImages(avatars: Record<string, string>): void;
-  setSummaryImage(path: string): void;
   setFocusOptions(sessionId: string, focusOptions: FocusOption[]): void;
   setSelectedFocus(selectedFocusId: string): void;
   setIntensityDraft(intensity: "mild" | "balanced" | "intense"): void;
   setUserContextDraft(userContext: string): void;
+  setDebaters(sessionId: string, debaters: DebaterConfig[], debateDeadlineMs: number | null, mainCount?: number): void;
   setPreparingTurn(sessionId: string, speaker: string, turnId: number, stage?: DebateStage): void;
   appendToken(sessionId: string, speaker: string, turnId: number, token: string, stage?: DebateStage): void;
   finalizeTurn(sessionId: string, speaker: string, turnId: number, fullContent: string, stage?: DebateStage): void;
   appendHostSummary(chunk: string): void;
   markStopRequested(): void;
-  setDone(sessionId: string, reportPath: string, summaryImagePath?: string): void;
+  setDone(sessionId: string, reportPath: string): void;
   setReportMarkdown(text: string): void;
   setStructuredReport(report: StructuredReport): void;
   setError(msg: string): void;
   reset(): void;
+
+  // Avatar actions
+  setAvatarImages(avatars: Record<string, string>): void;
+
+  // Drafting actions
+  swapDebater(selectedIndex: number, subIndex: number): void;
 
   // Follow-up actions
   setFollowUpTarget(target: string | null): void;
@@ -126,45 +132,44 @@ const pushActivity = (
 };
 
 const initialState = {
-  currentTab: "config" as DebateRoomTab,
+  phase: "config" as Phase,
+  backendPhase: "idle" as DebatePhase,
+  phaseLabel: "",
+  phaseDetail: "",
 
   status: "idle" as RunStatus,
-  phase: "idle" as DebatePhase,
-  phaseLabel: "准备开始",
-  phaseDetail: "输入一个具体命题后即可发起辩论。",
   topic: "",
   debateLanguage: "zh" as DebateLanguage,
   sessionId: "",
   debateDeadlineMs: null as number | null,
+
   hostResearch: "",
-  hostSummary: "",
-  debaters: [] as DebaterConfig[],
-  lines: [] as DebateLine[],
-  liveBuffers: {} as Record<string, { content: string; stage?: DebateStage }>,
-  reportPath: "",
-  reportMarkdown: "",
-  structuredReport: null as StructuredReport | null,
-  errorMessage: "",
-  activities: [] as WorkflowActivity[],
-  activeSpeaker: "",
-  activeTurnId: null as number | null,
-  preparingTurn: null as PreparingTurn | null,
-
-  // Stage tracking
-  currentStage: null as DebateStage | null,
-  stageLines: {} as Record<DebateStage, DebateLine[]>,
-
-  images: {
-    avatars: {} as Record<string, string>,
-  } as DebateImages,
-
   focusOptions: [] as FocusOption[],
   selectedFocusId: "",
   intensityDraft: "balanced" as const,
   userContextDraft: "",
   isConfigurationReady: false,
 
-  // Follow-up
+  debaters: [] as DebaterConfig[],
+  substituteDebaters: [] as DebaterConfig[],
+
+  hostSummary: "",
+  lines: [] as DebateLine[],
+  liveBuffers: {} as Record<string, { content: string; stage?: DebateStage }>,
+  activeSpeaker: "",
+  activeTurnId: null as number | null,
+  preparingTurn: null as PreparingTurn | null,
+  currentStage: null as DebateStage | null,
+  stageLines: {} as Record<string, DebateLine[]>,
+  transcript: [] as TranscriptMessage[],
+
+  reportPath: "",
+  reportMarkdown: "",
+  structuredReport: null as StructuredReport | null,
+
+  errorMessage: "",
+  activities: [] as WorkflowActivity[],
+
   followUpMessages: [] as FollowUpMessage[],
   followUpLiveResponse: "",
   followUpTarget: null as string | null,
@@ -174,56 +179,60 @@ const initialState = {
 export const useDebateStore = create<DebateState>((set) => ({
   ...initialState,
 
-  // Navigation
-  setTab: (tab) => set({ currentTab: tab }),
+  setPhase: (phase) => set({ phase }),
 
   start: (topic, debateLanguage) =>
     set({
       ...initialState,
       topic,
       debateLanguage,
-      currentTab: "host",
+      phase: "research",
       status: "running",
-      phase: "booting",
+      backendPhase: "booting",
       phaseLabel: "辩题已提交",
       phaseDetail: "正在建立会话并准备主持人工作流。",
       activities: [
         makeActivity("已提交新辩题", "系统已接收参数，准备开始主持人调研。", "live"),
       ],
     }),
+
   setSessionId: (sessionId) =>
     set((s) => ({
       sessionId: s.sessionId || sessionId,
     })),
-  setPhase: (phase, label, detail = "") =>
+
+  setBackendPhase: (backendPhase, label, detail = "") =>
     set((s) => ({
-      phase,
+      backendPhase,
       phaseLabel: label,
       phaseDetail: detail,
-      activities: pushActivity(s.activities, label, detail, phase === "error" ? "error" : "live"),
+      activities: pushActivity(s.activities, label, detail, backendPhase === "error" ? "error" : "live"),
     })),
+
   setStage: (stage) =>
     set((s) => ({
       currentStage: stage,
       activities: pushActivity(
         s.activities,
-        `进入${stage === "opening" ? "开场" : stage === "free_debate" ? "自由辩论" : stage === "closing" ? "总结" : "总结"}阶段`,
+        `进入${stage === "opening" ? "开场" : stage === "free_debate" ? "自由辩论" : stage === "closing" ? "总结陈词" : "总结"}阶段`,
         "",
-        "live"
+        "live",
       ),
     })),
+
   addActivity: (title, detail = "", tone = "neutral") =>
     set((s) => ({
       activities: pushActivity(s.activities, title, detail, tone),
     })),
+
   appendHostResearch: (chunk) =>
     set((s) => ({
       hostResearch: s.hostResearch + chunk,
     })),
+
   setFocusOptions: (sessionId, focusOptions) =>
     set((s) => ({
       sessionId: s.sessionId || sessionId,
-      currentTab: "host",
       focusOptions,
       selectedFocusId: focusOptions[0]?.id || "",
       isConfigurationReady: focusOptions.length > 0,
@@ -234,66 +243,69 @@ export const useDebateStore = create<DebateState>((set) => ({
         "done",
       ),
     })),
+
   setSelectedFocus: (selectedFocusId) => set({ selectedFocusId }),
   setIntensityDraft: (intensityDraft) => set({ intensityDraft }),
   setUserContextDraft: (userContextDraft) => set({ userContextDraft }),
-  setDebaters: (sessionId, debaters, debateDeadlineMs) =>
-    set((s) => ({
-      sessionId: s.sessionId || sessionId,
-      debateDeadlineMs,
-      debaters,
-      currentTab: "debate",
-      isConfigurationReady: false,
-      activities: pushActivity(
-        s.activities,
-        "辩手阵列已建立",
-        `已生成 ${debaters.length} 位立场各异的辩手，30 分钟上限计时开始。`,
-        "done",
-      ),
-    })),
 
-  setBackgroundImage: (path) =>
-    set((s) => ({
-      images: { ...s.images, background: path },
-      activities: pushActivity(
-        s.activities,
-        "辩论场景已生成",
-        "AI绘制的辩论舞台背景已就绪。",
-        "done",
-      ),
-    })),
+  setDebaters: (sessionId, debaters, debateDeadlineMs, mainCount) =>
+    set((s) => {
+      // Split using backend-provided main_count, or fallback to all
+      const mc = mainCount ?? debaters.length;
+      const selected = debaters.slice(0, mc);
+      const subs = debaters.slice(mc);
+      return {
+        sessionId: s.sessionId || sessionId,
+        debateDeadlineMs,
+        debaters: selected,
+        substituteDebaters: subs,
+        phase: "drafting",
+        isConfigurationReady: false,
+        activities: pushActivity(
+          s.activities,
+          "辩手阵列已建立",
+          `已生成 ${selected.length} 位主力 + ${subs.length} 位替补辩手。`,
+          "done",
+        ),
+      };
+    }),
 
   setAvatarImages: (avatars) =>
     set((s) => ({
-      images: { ...s.images, avatars: { ...s.images.avatars, ...avatars } },
       debaters: s.debaters.map((d) =>
-        avatars[d.name] ? { ...d, avatar_url: avatars[d.name] } : d
+        avatars[d.name] ? { ...d, avatar_url: avatars[d.name] } : d,
+      ),
+      substituteDebaters: s.substituteDebaters.map((d) =>
+        avatars[d.name] ? { ...d, avatar_url: avatars[d.name] } : d,
       ),
     })),
 
-  setSummaryImage: (path) =>
-    set((s) => ({
-      images: { ...s.images, summary: path },
-      activities: pushActivity(
-        s.activities,
-        "总结海报已生成",
-        "辩论总结可视化海报已就绪。",
-        "done",
-      ),
-    })),
+  swapDebater: (selectedIndex, subIndex) =>
+    set((s) => {
+      const newSelected = [...s.debaters];
+      const newSubs = [...s.substituteDebaters];
+      const temp = newSelected[selectedIndex];
+      newSelected[selectedIndex] = newSubs[subIndex];
+      newSubs[subIndex] = temp;
+      return { debaters: newSelected, substituteDebaters: newSubs };
+    }),
+
   setPreparingTurn: (sessionId, speaker, turnId, stage) =>
     set((s) => ({
       sessionId: s.sessionId || sessionId,
+      // Don't override drafting phase — user must confirm lineup first
+      phase: s.phase === "drafting" ? "drafting" : "arena",
       activeSpeaker: speaker,
       activeTurnId: turnId,
       preparingTurn: { speaker, turnId, stage },
       activities: pushActivity(
         s.activities,
         `${speaker} 正在准备发言`,
-        `第 ${turnId + 1} 轮即将开始生成。`,
+        `第 ${turnId + 1} 轮即将开始。`,
         "live",
       ),
     })),
+
   appendToken: (sessionId, speaker, turnId, token, stage) => {
     const key = `${speaker}-${turnId}`;
     set((s) => {
@@ -302,6 +314,8 @@ export const useDebateStore = create<DebateState>((set) => ({
         s.preparingTurn?.speaker === speaker && s.preparingTurn?.turnId === turnId;
       return {
         sessionId: s.sessionId || sessionId,
+        // Don't override drafting phase — user must confirm lineup first
+        phase: s.phase === "drafting" ? "drafting" : "arena",
         activeSpeaker: speaker,
         activeTurnId: turnId,
         preparingTurn: preparingTurnMatches ? null : s.preparingTurn,
@@ -313,16 +327,12 @@ export const useDebateStore = create<DebateState>((set) => ({
           },
         },
         activities: firstTokenOfTurn
-          ? pushActivity(
-              s.activities,
-              `${speaker} 开始发言`,
-              `第 ${turnId + 1} 轮正在实时生成中。`,
-              "live",
-            )
+          ? pushActivity(s.activities, `${speaker} 开始发言`, `第 ${turnId + 1} 轮正在生成中。`, "live")
           : s.activities,
       };
     });
   },
+
   finalizeTurn: (sessionId, speaker, turnId, fullContent, stage) => {
     const key = `${speaker}-${turnId}`;
     set((s) => {
@@ -331,6 +341,17 @@ export const useDebateStore = create<DebateState>((set) => ({
       const newLine: DebateLine = { key, speaker, turnId, content: fullContent, stage };
       const stageKey = stage || "free_debate";
       const currentStageLines = s.stageLines[stageKey] || [];
+
+      // Build transcript message
+      const msg: TranscriptMessage = {
+        id: key,
+        timestamp: new Date(),
+        speaker,
+        content: fullContent,
+        stage: (stage || "free_debate") as TranscriptMessage["stage"],
+        turnId,
+      };
+
       return {
         sessionId: s.sessionId || sessionId,
         activeSpeaker: s.activeSpeaker === speaker && s.activeTurnId === turnId ? "" : s.activeSpeaker,
@@ -339,44 +360,38 @@ export const useDebateStore = create<DebateState>((set) => ({
           s.preparingTurn?.speaker === speaker && s.preparingTurn?.turnId === turnId ? null : s.preparingTurn,
         liveBuffers: nextBuffers,
         lines: [...s.lines, newLine],
-        stageLines: {
-          ...s.stageLines,
-          [stageKey]: [...currentStageLines, newLine],
-        },
-        activities: pushActivity(
-          s.activities,
-          `${speaker} 完成发言`,
-          `第 ${turnId + 1} 轮已写入辩论记录。`,
-          "done",
-        ),
+        stageLines: { ...s.stageLines, [stageKey]: [...currentStageLines, newLine] },
+        transcript: [...s.transcript, msg],
+        activities: pushActivity(s.activities, `${speaker} 完成发言`, `第 ${turnId + 1} 轮已写入记录。`, "done"),
       };
     });
   },
+
   appendHostSummary: (chunk) =>
     set((s) => ({
       hostSummary: s.hostSummary + chunk,
+      phase: "summary",
     })),
+
   markStopRequested: () =>
     set((s) => ({
       activities: pushActivity(
         s.activities,
         "已请求提前结束",
-        "系统会在当前轮次结束后进入主持人总结，并继续写入本地报告。",
+        "系统会在当前轮次结束后进入主持人总结。",
         "neutral",
       ),
     })),
-  setDone: (sessionId, reportPath, summaryImagePath) =>
+
+  setDone: (sessionId, reportPath) =>
     set((s) => ({
       status: "done",
-      phase: "complete",
+      backendPhase: "complete",
       phaseLabel: "报告已生成",
       phaseDetail: "主持人总结完成，本轮辩论已归档。",
-      currentTab: "summary",
+      phase: "summary",
       sessionId,
       reportPath,
-      images: summaryImagePath
-        ? { ...s.images, summary: summaryImagePath, background: summaryImagePath }
-        : s.images,
       activeSpeaker: "",
       activeTurnId: null,
       preparingTurn: null,
@@ -384,26 +399,30 @@ export const useDebateStore = create<DebateState>((set) => ({
       activities: pushActivity(
         s.activities,
         "本轮辩论已完成",
-        "可继续阅读报告，或调整参数发起下一轮辩论。",
+        "可继续阅读报告，或发起下一轮辩论。",
         "done",
       ),
     })),
+
   setReportMarkdown: (text) => set({ reportMarkdown: text }),
   setStructuredReport: (report) => set({ structuredReport: report }),
+
   setError: (msg) =>
     set((s) => ({
       status: "error",
-      phase: "error",
+      backendPhase: "error",
       phaseLabel: "流程异常",
       phaseDetail: msg,
       errorMessage: msg,
       preparingTurn: null,
       activities: pushActivity(s.activities, "发生错误", msg, "error"),
     })),
+
   reset: () => set({ ...initialState }),
 
   // Follow-up actions
   setFollowUpTarget: (target) => set({ followUpTarget: target }),
+
   addFollowUpMessage: (message) =>
     set((s) => ({
       followUpMessages: [...s.followUpMessages, message],
@@ -412,29 +431,32 @@ export const useDebateStore = create<DebateState>((set) => ({
         s.activities,
         `向 ${message.target_role} 提问`,
         message.question.slice(0, 50) + (message.question.length > 50 ? "..." : ""),
-        "live"
+        "live",
       ),
     })),
+
   appendFollowUpToken: (followUpId, token) =>
     set((s) => ({
       followUpLiveResponse: s.followUpLiveResponse + token,
       followUpMessages: s.followUpMessages.map((m) =>
-        m.id === followUpId ? { ...m, response: m.response + token } : m
+        m.id === followUpId ? { ...m, response: m.response + token } : m,
       ),
     })),
+
   finalizeFollowUp: (followUpId, fullResponse) =>
     set((s) => ({
       followUpLiveResponse: "",
       isFollowUpStreaming: false,
       followUpMessages: s.followUpMessages.map((m) =>
-        m.id === followUpId ? { ...m, response: fullResponse, isStreaming: false } : m
+        m.id === followUpId ? { ...m, response: fullResponse, isStreaming: false } : m,
       ),
       activities: pushActivity(
         s.activities,
         "跟进问题已回答",
         fullResponse.slice(0, 50) + (fullResponse.length > 50 ? "..." : ""),
-        "done"
+        "done",
       ),
     })),
+
   setFollowUpStreaming: (isStreaming) => set({ isFollowUpStreaming: isStreaming }),
 }));

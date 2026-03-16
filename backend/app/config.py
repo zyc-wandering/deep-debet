@@ -72,6 +72,9 @@ class Settings:
 
     data_dir: Path = Path(os.getenv("DATA_DIR", "./data"))
     logs_dir: Path = data_dir / "logs"
+    debates_dir: Path = data_dir / "debates"
+
+    # Legacy aliases (kept for backward compatibility during migration)
     trace_dir: Path = data_dir / "traces"
     reports_dir: Path = data_dir / "reports"
     sessions_dir: Path = data_dir / "sessions"
@@ -131,6 +134,19 @@ if not settings.openai_model:
 def ensure_directories() -> None:
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     settings.logs_dir.mkdir(parents=True, exist_ok=True)
-    settings.trace_dir.mkdir(parents=True, exist_ok=True)
-    settings.reports_dir.mkdir(parents=True, exist_ok=True)
-    settings.sessions_dir.mkdir(parents=True, exist_ok=True)
+    settings.debates_dir.mkdir(parents=True, exist_ok=True)
+
+
+def create_debate_dir(topic: str) -> Path:
+    """Create and return a per-debate directory under debates_dir.
+
+    Structure: backend/data/debates/{slugified_topic}_{timestamp}/
+    Contains: session.json, report.md, trace.jsonl, images/
+    """
+    from app.utils.formatting import slugify, utc_now_compact
+
+    dir_name = f"{slugify(topic)}_{utc_now_compact()}"
+    debate_dir = settings.debates_dir / dir_name
+    debate_dir.mkdir(parents=True, exist_ok=True)
+    (debate_dir / "images").mkdir(exist_ok=True)
+    return debate_dir

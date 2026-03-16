@@ -121,7 +121,7 @@ class SummaryStageExecutor(DebateStageExecutor):
         write_start = monotonic()
         try:
             with debate_logger.span_context("summary:write_report"):
-                report_path = self._report_writer.write_markdown(ctx.topic, report)
+                report_path = self._report_writer.write_markdown(ctx.session.debate_dir, report)
             session.report_path = str(report_path.resolve())
             debate_logger.info(
                 "Summary stage: Report written to file",

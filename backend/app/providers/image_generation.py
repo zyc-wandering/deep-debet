@@ -120,8 +120,28 @@ class ImageGenerationService:
 
     def __init__(self) -> None:
         self.provider = ImageGenerationProvider()
-        self.images_dir = settings.data_dir / "images"
-        self.images_dir.mkdir(parents=True, exist_ok=True)
+
+    def _get_images_dir(self, debate_dir: str | Path | None) -> Path:
+        """Get images directory, either from debate_dir or fallback."""
+        if debate_dir:
+            images_dir = Path(debate_dir) / "images"
+        else:
+            images_dir = settings.data_dir / "images"
+        images_dir.mkdir(parents=True, exist_ok=True)
+        return images_dir
+
+    @staticmethod
+    def _to_relative_path(output_path: Path) -> str:
+        """Convert absolute image path to a path relative to debates_dir.
+
+        This relative path is used by the frontend to request images
+        via /api/images/{relative_path}.
+        """
+        try:
+            return str(output_path.relative_to(settings.debates_dir)).replace("\\", "/")
+        except ValueError:
+            # Fallback: just return absolute path
+            return str(output_path)
 
     def _generate_avatar_prompt(self, debater: dict) -> str:
         """Generate a prompt for debater avatar."""
@@ -213,7 +233,9 @@ class ImageGenerationService:
 """
         return prompt.strip()
 
-    async def generate_debater_avatar(self, debater: dict, session_id: str) -> Optional[str]:
+    async def generate_debater_avatar(
+        self, debater: dict, session_id: str, debate_dir: str | Path | None = None,
+    ) -> Optional[str]:
         """Generate avatar for a debater.
 
         Returns:
@@ -225,16 +247,18 @@ class ImageGenerationService:
         if not image_url:
             return None
 
-        # Save with unique filename
+        images_dir = self._get_images_dir(debate_dir)
         safe_name = debater.get("name", "unknown").replace(" ", "_")
-        filename = f"avatar_{session_id}_{safe_name}_{uuid.uuid4().hex[:8]}.png"
-        output_path = self.images_dir / filename
+        filename = f"avatar_{safe_name}_{uuid.uuid4().hex[:8]}.png"
+        output_path = images_dir / filename
 
         if await self.provider.download_image(image_url, output_path):
-            return str(output_path)
+            return self._to_relative_path(output_path)
         return None
 
-    async def generate_debate_background(self, topic: str, debaters: list, session_id: str) -> Optional[str]:
+    async def generate_debate_background(
+        self, topic: str, debaters: list, session_id: str, debate_dir: str | Path | None = None,
+    ) -> Optional[str]:
         """Generate background for debate stage.
 
         Returns:
@@ -246,14 +270,17 @@ class ImageGenerationService:
         if not image_url:
             return None
 
-        filename = f"bg_{session_id}_{uuid.uuid4().hex[:8]}.png"
-        output_path = self.images_dir / filename
+        images_dir = self._get_images_dir(debate_dir)
+        filename = f"bg_{uuid.uuid4().hex[:8]}.png"
+        output_path = images_dir / filename
 
         if await self.provider.download_image(image_url, output_path):
-            return str(output_path)
+            return self._to_relative_path(output_path)
         return None
 
-    async def generate_summary_image(self, topic: str, debaters: list, session_id: str) -> Optional[str]:
+    async def generate_summary_image(
+        self, topic: str, debaters: list, session_id: str, debate_dir: str | Path | None = None,
+    ) -> Optional[str]:
         """Generate summary image for the debate.
 
         Returns:
@@ -265,9 +292,10 @@ class ImageGenerationService:
         if not image_url:
             return None
 
-        filename = f"summary_{session_id}_{uuid.uuid4().hex[:8]}.png"
-        output_path = self.images_dir / filename
+        images_dir = self._get_images_dir(debate_dir)
+        filename = f"summary_{uuid.uuid4().hex[:8]}.png"
+        output_path = images_dir / filename
 
         if await self.provider.download_image(image_url, output_path):
-            return str(output_path)
+            return self._to_relative_path(output_path)
         return None

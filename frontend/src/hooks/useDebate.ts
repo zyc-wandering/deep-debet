@@ -1,4 +1,4 @@
-import { fetchEventSource } from "@microsoft/fetch-event-source";
+import { EventSourceMessage, fetchEventSource } from "@microsoft/fetch-event-source";
 import { useCallback, useMemo, useRef } from "react";
 import {
   DebateConfigureRequest,
@@ -13,23 +13,20 @@ import { useDebateStore } from "../store/debateStore";
 const DEFAULT_API_BASE = (import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000").trim();
 const LOCAL_FALLBACK_API_BASES = ["http://127.0.0.1:8001", "http://127.0.0.1:8010"];
 const OUTDATED_BACKEND_MESSAGE =
-  "当前连接的后端还是旧版接口，且没有找到可用的 Phase 3 新后端。请重启本地 backend 后再试。";
+  "当前连接的后端还是旧版接口，且没有找到可用的新后端。请重启本地 backend 后再试。";
 
 function resolveImageUrl(apiBase: string, rawPath?: string | null): string | undefined {
   if (!rawPath) return undefined;
-
   const trimmed = rawPath.trim();
   if (!trimmed) return undefined;
-
-  if (/^(?:https?:)?\/\//i.test(trimmed) || trimmed.startsWith("data:")) {
-    return trimmed;
-  }
-
+  if (/^(?:https?:)?\/\//i.test(trimmed) || trimmed.startsWith("data:")) return trimmed;
+  // Backend returns a relative path like "topic_ts/images/avatar_name.png"
+  // Encode each segment separately to preserve directory structure
   const normalized = trimmed.replace(/\\/g, "/");
-  const filename = normalized.split("/").filter(Boolean).pop();
-  if (!filename) return undefined;
-
-  return `${apiBase}/api/images/${encodeURIComponent(filename)}`;
+  const segments = normalized.split("/").filter(Boolean);
+  if (!segments.length) return undefined;
+  const encoded = segments.map((s) => encodeURIComponent(s)).join("/");
+  return `${apiBase}/api/images/${encoded}`;
 }
 
 interface PhasePayload {
@@ -50,9 +47,7 @@ export function useDebate() {
   const phase3SupportRef = useRef<boolean | null>(null);
 
   const fetchReport = useCallback(async (reportPath: string) => {
-    if (!reportPath.trim()) {
-      return;
-    }
+    if (!reportPath.trim()) return;
     const url = `${apiBaseRef.current}/api/debate/report?path=${encodeURIComponent(reportPath)}`;
     const resp = await fetch(url);
     if (!resp.ok) return;
@@ -61,9 +56,7 @@ export function useDebate() {
   }, []);
 
   const ensurePhase3Backend = useCallback(async () => {
-    if (phase3SupportRef.current === true) {
-      return;
-    }
+    if (phase3SupportRef.current === true) return;
 
     const candidates = [DEFAULT_API_BASE, ...LOCAL_FALLBACK_API_BASES].filter(
       (base, index, list) => Boolean(base) && list.indexOf(base) === index,
@@ -74,19 +67,12 @@ export function useDebate() {
         const response = await fetch(`${base}/openapi.json`, {
           headers: { Accept: "application/json" },
         });
-        if (!response.ok) {
-          continue;
-        }
+        if (!response.ok) continue;
 
         const schema = (await response.json()) as {
           paths?: Record<string, unknown>;
           components?: {
-            schemas?: Record<
-              string,
-              {
-                properties?: Record<string, unknown>;
-              }
-            >;
+            schemas?: Record<string, { properties?: Record<string, unknown> }>;
           };
         };
 
@@ -109,16 +95,16 @@ export function useDebate() {
   }, []);
 
   const handleMessage = useCallback(
-    async (msg: MessageEvent) => {
+    async (msg: EventSourceMessage) => {
       if (!msg.event) return;
       const data = (msg.data ? (JSON.parse(msg.data) as TraceAwarePayload) : {}) as TraceAwarePayload;
 
       if (msg.event === "phase") {
-        const phaseData = data as PhasePayload;
+        const phaseData = data as unknown as PhasePayload;
         if (phaseData.session_id) {
           useDebateStore.getState().setSessionId(phaseData.session_id);
         }
-        useDebateStore.getState().setPhase(phaseData.phase, phaseData.title, phaseData.detail || "");
+        useDebateStore.getState().setBackendPhase(phaseData.phase, phaseData.title, phaseData.detail || "");
         return;
       }
 
@@ -132,10 +118,7 @@ export function useDebate() {
       }
 
       if (msg.event === "focus_options_ready") {
-        const focusData = data as {
-          session_id: string;
-          focus_options: FocusOption[];
-        };
+        const focusData = data as { session_id: string; focus_options: FocusOption[] };
         useDebateStore.getState().setFocusOptions(focusData.session_id, focusData.focus_options);
         return;
       }
@@ -145,21 +128,19 @@ export function useDebate() {
           session_id: string;
           debaters: DebaterConfig[];
           deadline_at?: string | null;
+          main_count?: number;
         };
         useDebateStore.getState().setDebaters(
           debaterData.session_id,
           debaterData.debaters,
           debaterData.deadline_at ? Date.parse(debaterData.deadline_at) : null,
+          debaterData.main_count,
         );
         return;
       }
 
+      // background_ready - ignore (removed feature)
       if (msg.event === "background_ready") {
-        const bgData = data as { background_path: string };
-        const imageUrl = resolveImageUrl(apiBaseRef.current, bgData.background_path);
-        if (imageUrl) {
-          useDebateStore.getState().setBackgroundImage(imageUrl);
-        }
         return;
       }
 
@@ -167,7 +148,7 @@ export function useDebate() {
         const avatarData = data as { avatars: Record<string, string> };
         const avatars: Record<string, string> = {};
         Object.entries(avatarData.avatars).forEach(([name, path]) => {
-          const imageUrl = resolveImageUrl(apiBaseRef.current, path);
+          const imageUrl = resolveImageUrl(apiBaseRef.current, path as string);
           if (imageUrl) {
             avatars[name] = imageUrl;
           }
@@ -211,9 +192,7 @@ export function useDebate() {
       }
 
       if (msg.event === "stage_change") {
-        const stageData = data as {
-          stage: "opening" | "free_debate" | "closing" | "summary";
-        };
+        const stageData = data as { stage: "opening" | "free_debate" | "closing" | "summary" };
         useDebateStore.getState().setStage(stageData.stage);
         return;
       }
@@ -249,13 +228,8 @@ export function useDebate() {
       }
 
       if (msg.event === "done") {
-        const doneData = data as {
-          session_id: string;
-          report_path: string;
-          summary_image_path?: string;
-        };
-        const summaryImageUrl = resolveImageUrl(apiBaseRef.current, doneData.summary_image_path);
-        useDebateStore.getState().setDone(doneData.session_id, doneData.report_path, summaryImageUrl);
+        const doneData = data as { session_id: string; report_path: string };
+        useDebateStore.getState().setDone(doneData.session_id, doneData.report_path);
         await fetchReport(doneData.report_path);
         abortRef.current?.abort();
         abortRef.current = null;
@@ -293,17 +267,13 @@ export function useDebate() {
           },
           onmessage: handleMessage,
           onerror: (error) => {
-            if (ctrl.signal.aborted) {
-              return;
-            }
+            if (ctrl.signal.aborted) return;
             const errorMsg = error.message || "Connection error";
             useDebateStore.getState().setError(errorMsg);
           },
         });
       } catch (error) {
-        if (ctrl.signal.aborted) {
-          return;
-        }
+        if (ctrl.signal.aborted) return;
         const message = error instanceof Error ? error.message : "Connection error";
         useDebateStore.getState().setError(message);
       }
@@ -347,6 +317,7 @@ export function useDebate() {
         }
       },
       fetchReport,
+      getApiBase: () => apiBaseRef.current,
     }),
     [ensurePhase3Backend, fetchReport, runStream],
   );

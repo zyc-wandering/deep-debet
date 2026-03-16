@@ -192,6 +192,9 @@ class DebateSession(BaseModel):
     # Follow-up thread
     follow_up_messages: List[FollowUpMessage] = Field(default_factory=list)
 
+    # Per-debate directory (all artifacts stored here)
+    debate_dir: Optional[str] = None
+
     # Structured report data
     structured_report: Optional[StructuredReport] = None
     report_path: Optional[str] = None
