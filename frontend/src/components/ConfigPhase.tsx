@@ -11,6 +11,7 @@ const HOTSPOTS_ZH = [
   "远程办公是否会成为未来主流？",
   "经济下行期企业应优先裁员还是降薪？",
   "人类是否应该加大深空探索投入？",
+  "2026年全球经济环境下黄金走势与中东美伊战争的关系相关性研究",
 ];
 
 const HOTSPOTS_EN = [
@@ -21,6 +22,7 @@ const HOTSPOTS_EN = [
 ];
 
 const MAX_ROUNDS_LIMIT = 48;
+const DEBATER_COUNT_OPTIONS = [2, 4, 6, 8] as const;
 
 function getRoundBounds(numDebaters: number) {
   const minRounds = numDebaters * 3;
@@ -41,10 +43,10 @@ export default function ConfigPhase({ onStart }: Props) {
   const [config, setConfig] = useState<DebateConfig>({
     topic: "",
     language: "zh",
-    numDebaters: 3,
-    maxRounds: 18,
+    numDebaters: 4,
+    maxRounds: 20,
     modelVariant: "lite",
-    enableSearch: false,
+    enableSearch: true,
   });
 
   const hotspots = config.language === "zh" ? HOTSPOTS_ZH : HOTSPOTS_EN;
@@ -175,7 +177,7 @@ export default function ConfigPhase({ onStart }: Props) {
                 });
               }}
             >
-              {[2, 3, 4, 5].map((num) => (
+              {DEBATER_COUNT_OPTIONS.map((num) => (
                 <option key={num} value={num}>
                   {num} {config.language === "zh" ? "位辩手" : "Agents"}
                 </option>

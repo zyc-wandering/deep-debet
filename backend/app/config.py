@@ -24,6 +24,10 @@ def _looks_like_seed_key(value: str) -> bool:
     return bool(re.fullmatch(r"[0-9a-fA-F-]{36}", value.strip()))
 
 
+def _looks_like_zhipu_key(value: str) -> bool:
+    return bool(re.fullmatch(r"[0-9a-fA-F]{32}\.[A-Za-z0-9]{16}", value.strip()))
+
+
 def _read_key_from_file(var_name: str) -> str:
     """
     Local fallback for user-managed keys.ts.
@@ -32,26 +36,32 @@ def _read_key_from_file(var_name: str) -> str:
       const kimi_code_api_key = "..."
       const moonshot_api_key = "..."
       const seed_api_key = "..."
+      const zhipu_api_key = "..."
+      const bigmodel_api_key = "..."
     """
     mapping = {
-        "TAVILY_API_KEY": "travily_api_key",
-        "KIMI_CODE_API_KEY": "kimi_code_api_key",
-        "MOONSHOT_API_KEY": "moonshot_api_key",
-        "SEED_API_KEY": "seed_api_key",
-        "ARK_API_KEY": "seed_api_key",
+        "TAVILY_API_KEY": ["travily_api_key", "tavily_api_key"],
+        "KIMI_CODE_API_KEY": ["kimi_code_api_key"],
+        "MOONSHOT_API_KEY": ["moonshot_api_key"],
+        "SEED_API_KEY": ["seed_api_key"],
+        "ARK_API_KEY": ["seed_api_key"],
+        "ZHIPU_API_KEY": ["zhipu_api_key", "bigmodel_api_key"],
+        "BIGMODEL_API_KEY": ["bigmodel_api_key", "zhipu_api_key"],
+        "PERPLEXITY_API_KEY": ["perplexity_api_key"],
     }
-    target = mapping.get(var_name)
-    if not target:
+    targets = mapping.get(var_name)
+    if not targets:
         return ""
 
     key_file = Path(__file__).resolve().parents[2] / "keys.ts"
     if not key_file.exists():
         return ""
     text = key_file.read_text(encoding="utf-8", errors="ignore")
-    m = re.search(rf"{re.escape(target)}\s*=\s*\"([^\"]+)\"", text)
-    if not m:
-        return ""
-    return m.group(1).strip()
+    for target in targets:
+        m = re.search(rf"{re.escape(target)}\s*=\s*\"([^\"]+)\"", text)
+        if m:
+            return m.group(1).strip()
+    return ""
 
 
 def _bool_env(name: str, default: bool) -> bool:
@@ -85,6 +95,12 @@ class Settings:
         or _read_key_from_file("ARK_API_KEY")
         or _read_key_from_file("SEED_API_KEY")
     )
+    zhipu_api_key: str = (
+        os.getenv("ZHIPU_API_KEY", "")
+        or os.getenv("BIGMODEL_API_KEY", "")
+        or _read_key_from_file("ZHIPU_API_KEY")
+        or _read_key_from_file("BIGMODEL_API_KEY")
+    )
     openai_base_url: str = os.getenv("OPENAI_BASE_URL", "")
     openai_api_key: str = (
         os.getenv("OPENAI_API_KEY", "")
@@ -93,17 +109,24 @@ class Settings:
         or _read_key_from_file("MOONSHOT_API_KEY")
         or _read_key_from_file("KIMI_CODE_API_KEY")
     )
+    openai_base_url_pro: str = os.getenv("OPENAI_BASE_URL_PRO", "")
+    openai_api_key_pro: str = (
+        os.getenv("OPENAI_API_KEY_PRO", "")
+        or zhipu_api_key
+        or openai_api_key
+    )
     openai_model: str = os.getenv("OPENAI_MODEL", "")
-    openai_model_pro: str = os.getenv("OPENAI_MODEL_PRO", "ep-20260312221206-pqnpr")
+    openai_model_pro: str = os.getenv("OPENAI_MODEL_PRO", "")
     openai_max_output_tokens: int = int(os.getenv("OPENAI_MAX_OUTPUT_TOKENS", "32768"))
 
-    search_provider: str = os.getenv("SEARCH_PROVIDER", "tavily")
+    search_provider: str = os.getenv("SEARCH_PROVIDER", "perplexity")
     tavily_api_key: str = os.getenv("TAVILY_API_KEY", "") or _read_key_from_file("TAVILY_API_KEY")
+    perplexity_api_key: str = os.getenv("PERPLEXITY_API_KEY", "") or _read_key_from_file("PERPLEXITY_API_KEY")
 
-    default_debater_count: int = int(os.getenv("DEFAULT_DEBATER_COUNT", "3"))
+    default_debater_count: int = int(os.getenv("DEFAULT_DEBATER_COUNT", "4"))
     default_time_limit_sec: int = int(os.getenv("DEFAULT_TIME_LIMIT_SEC", "1800"))
     default_max_turns: int = int(os.getenv("DEFAULT_MAX_TURNS", "24"))
-    default_enable_debater_search: bool = _bool_env("DEFAULT_ENABLE_DEBATER_SEARCH", False)
+    default_enable_debater_search: bool = _bool_env("DEFAULT_ENABLE_DEBATER_SEARCH", True)
 
     allow_unsafe_topics: bool = _bool_env("ALLOW_UNSAFE_TOPICS", False)
 
@@ -113,6 +136,8 @@ settings = Settings()
 if not settings.openai_base_url:
     if settings.ark_api_key or _looks_like_seed_key(settings.openai_api_key):
         object.__setattr__(settings, "openai_base_url", "https://ark.cn-beijing.volces.com/api/v3")
+    elif _looks_like_zhipu_key(settings.openai_api_key):
+        object.__setattr__(settings, "openai_base_url", "https://open.bigmodel.cn/api/paas/v4")
     elif _looks_like_kimi_code_key(settings.openai_api_key):
         object.__setattr__(settings, "openai_base_url", "https://api.kimi.com/coding/v1")
     elif _looks_like_moonshot_key(settings.openai_api_key):
@@ -123,12 +148,26 @@ if not settings.openai_base_url:
 if not settings.openai_model:
     if settings.ark_api_key or _looks_like_seed_key(settings.openai_api_key):
         object.__setattr__(settings, "openai_model", "doubao-seed-2-0-lite-260215")
+    elif _looks_like_zhipu_key(settings.openai_api_key):
+        object.__setattr__(settings, "openai_model", "glm-5")
     elif _looks_like_kimi_code_key(settings.openai_api_key):
         object.__setattr__(settings, "openai_model", "kimi-for-coding")
     elif _looks_like_moonshot_key(settings.openai_api_key):
         object.__setattr__(settings, "openai_model", "kimi-latest")
     else:
         object.__setattr__(settings, "openai_model", "gpt-4.1-mini")
+
+if not settings.openai_base_url_pro:
+    if settings.zhipu_api_key or _looks_like_zhipu_key(settings.openai_api_key_pro):
+        object.__setattr__(settings, "openai_base_url_pro", "https://open.bigmodel.cn/api/paas/v4")
+    else:
+        object.__setattr__(settings, "openai_base_url_pro", settings.openai_base_url)
+
+if not settings.openai_model_pro:
+    if settings.zhipu_api_key or _looks_like_zhipu_key(settings.openai_api_key_pro):
+        object.__setattr__(settings, "openai_model_pro", "glm-5")
+    else:
+        object.__setattr__(settings, "openai_model_pro", "ep-20260312221206-pqnpr")
 
 
 def ensure_directories() -> None:

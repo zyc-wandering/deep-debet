@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { persist, createJSONStorage } from "zustand/middleware";
 import {
   Phase,
   DebateLine,
@@ -10,26 +11,23 @@ import {
   FocusOption,
   PreparingTurn,
   StructuredReport,
-  WorkflowActivity,
   TranscriptMessage,
+  WorkflowActivity,
 } from "../types";
 
 type RunStatus = "idle" | "running" | "done" | "error";
 
 interface DebateState {
-  // 5-phase UI state
   phase: Phase;
   backendPhase: DebatePhase;
   phaseLabel: string;
   phaseDetail: string;
-
   status: RunStatus;
   topic: string;
   debateLanguage: DebateLanguage;
   sessionId: string;
   debateDeadlineMs: number | null;
 
-  // Research
   hostResearch: string;
   focusOptions: FocusOption[];
   selectedFocusId: string;
@@ -37,11 +35,9 @@ interface DebateState {
   userContextDraft: string;
   isConfigurationReady: boolean;
 
-  // Drafting
   debaters: DebaterConfig[];
   substituteDebaters: DebaterConfig[];
 
-  // Arena
   hostSummary: string;
   lines: DebateLine[];
   liveBuffers: Record<string, { content: string; stage?: DebateStage }>;
@@ -52,22 +48,18 @@ interface DebateState {
   stageLines: Record<string, DebateLine[]>;
   transcript: TranscriptMessage[];
 
-  // Summary
   reportPath: string;
   reportMarkdown: string;
   structuredReport: StructuredReport | null;
 
-  // Misc
   errorMessage: string;
   activities: WorkflowActivity[];
 
-  // Follow-up
   followUpMessages: FollowUpMessage[];
   followUpLiveResponse: string;
   followUpTarget: string | null;
   isFollowUpStreaming: boolean;
 
-  // Actions
   setPhase(phase: Phase): void;
   start(topic: string, debateLanguage: DebateLanguage): void;
   setSessionId(sessionId: string): void;
@@ -90,14 +82,8 @@ interface DebateState {
   setStructuredReport(report: StructuredReport): void;
   setError(msg: string): void;
   reset(): void;
-
-  // Avatar actions
   setAvatarImages(avatars: Record<string, string>): void;
-
-  // Drafting actions
   swapDebater(selectedIndex: number, subIndex: number): void;
-
-  // Follow-up actions
   setFollowUpTarget(target: string | null): void;
   addFollowUpMessage(message: FollowUpMessage): void;
   appendFollowUpToken(followUpId: string, token: string): void;
@@ -131,332 +117,344 @@ const pushActivity = (
   return [...current.slice(-11), nextItem];
 };
 
-const initialState = {
-  phase: "config" as Phase,
+const ephemeralState = {
   backendPhase: "idle" as DebatePhase,
   phaseLabel: "",
   phaseDetail: "",
+  liveBuffers: {} as Record<string, { content: string; stage?: DebateStage }>,
+  activeSpeaker: "",
+  activeTurnId: null as number | null,
+  preparingTurn: null as PreparingTurn | null,
+  stageLines: {} as Record<string, DebateLine[]>,
+  errorMessage: "",
+  activities: [] as WorkflowActivity[],
+  followUpLiveResponse: "",
+  followUpTarget: null as string | null,
+  isFollowUpStreaming: false,
+};
 
+const persistedState = {
+  phase: "config" as Phase,
   status: "idle" as RunStatus,
   topic: "",
   debateLanguage: "zh" as DebateLanguage,
   sessionId: "",
   debateDeadlineMs: null as number | null,
-
   hostResearch: "",
   focusOptions: [] as FocusOption[],
   selectedFocusId: "",
   intensityDraft: "balanced" as const,
   userContextDraft: "",
   isConfigurationReady: false,
-
   debaters: [] as DebaterConfig[],
   substituteDebaters: [] as DebaterConfig[],
-
   hostSummary: "",
   lines: [] as DebateLine[],
-  liveBuffers: {} as Record<string, { content: string; stage?: DebateStage }>,
-  activeSpeaker: "",
-  activeTurnId: null as number | null,
-  preparingTurn: null as PreparingTurn | null,
   currentStage: null as DebateStage | null,
-  stageLines: {} as Record<string, DebateLine[]>,
   transcript: [] as TranscriptMessage[],
-
   reportPath: "",
   reportMarkdown: "",
   structuredReport: null as StructuredReport | null,
-
-  errorMessage: "",
-  activities: [] as WorkflowActivity[],
-
   followUpMessages: [] as FollowUpMessage[],
-  followUpLiveResponse: "",
-  followUpTarget: null as string | null,
-  isFollowUpStreaming: false,
 };
 
-export const useDebateStore = create<DebateState>((set) => ({
-  ...initialState,
+export const useDebateStore = create<DebateState>()(
+  persist(
+    (set, get) => ({
+      ...ephemeralState,
+      ...persistedState,
 
-  setPhase: (phase) => set({ phase }),
+      setPhase: (phase) => set({ phase }),
 
-  start: (topic, debateLanguage) =>
-    set({
-      ...initialState,
-      topic,
-      debateLanguage,
-      phase: "research",
-      status: "running",
-      backendPhase: "booting",
-      phaseLabel: "辩题已提交",
-      phaseDetail: "正在建立会话并准备主持人工作流。",
-      activities: [
-        makeActivity("已提交新辩题", "系统已接收参数，准备开始主持人调研。", "live"),
-      ],
-    }),
+      start: (topic, debateLanguage) =>
+        set({
+          ...ephemeralState,
+          ...persistedState,
+          topic,
+          debateLanguage,
+          phase: "research",
+          status: "running",
+          backendPhase: "booting",
+          phaseLabel: "辩题已提交",
+          phaseDetail: "正在建立会话并准备主持人工作流。",
+          activities: [
+            makeActivity("已提交新辩题", "系统已接收参数，准备开始主持人调研。", "live"),
+          ],
+        }),
 
-  setSessionId: (sessionId) =>
-    set((s) => ({
-      sessionId: s.sessionId || sessionId,
-    })),
+      setSessionId: (sessionId) =>
+        set((s) => ({ sessionId: s.sessionId || sessionId })),
 
-  setBackendPhase: (backendPhase, label, detail = "") =>
-    set((s) => ({
-      backendPhase,
-      phaseLabel: label,
-      phaseDetail: detail,
-      activities: pushActivity(s.activities, label, detail, backendPhase === "error" ? "error" : "live"),
-    })),
+      setBackendPhase: (backendPhase, label, detail = "") =>
+        set((s) => ({
+          backendPhase,
+          phaseLabel: label,
+          phaseDetail: detail,
+          activities: pushActivity(s.activities, label, detail, backendPhase === "error" ? "error" : "live"),
+        })),
 
-  setStage: (stage) =>
-    set((s) => ({
-      currentStage: stage,
-      activities: pushActivity(
-        s.activities,
-        `进入${stage === "opening" ? "开场" : stage === "free_debate" ? "自由辩论" : stage === "closing" ? "总结陈词" : "总结"}阶段`,
-        "",
-        "live",
-      ),
-    })),
+      setStage: (stage) =>
+        set((s) => ({
+          currentStage: stage,
+          activities: pushActivity(
+            s.activities,
+            `进入${stage === "opening" ? "开场" : stage === "free_debate" ? "自由辩论" : stage === "closing" ? "总结陈词" : "总结"}阶段`,
+            "",
+            "live",
+          ),
+        })),
 
-  addActivity: (title, detail = "", tone = "neutral") =>
-    set((s) => ({
-      activities: pushActivity(s.activities, title, detail, tone),
-    })),
+      addActivity: (title, detail = "", tone = "neutral") =>
+        set((s) => ({ activities: pushActivity(s.activities, title, detail, tone) })),
 
-  appendHostResearch: (chunk) =>
-    set((s) => ({
-      hostResearch: s.hostResearch + chunk,
-    })),
+      appendHostResearch: (chunk) =>
+        set((s) => ({ hostResearch: s.hostResearch + chunk })),
 
-  setFocusOptions: (sessionId, focusOptions) =>
-    set((s) => ({
-      sessionId: s.sessionId || sessionId,
-      focusOptions,
-      selectedFocusId: focusOptions[0]?.id || "",
-      isConfigurationReady: focusOptions.length > 0,
-      activities: pushActivity(
-        s.activities,
-        "关注切面已生成",
-        `主持人已给出 ${focusOptions.length} 个可选讨论切面。`,
-        "done",
-      ),
-    })),
+      setFocusOptions: (sessionId, focusOptions) =>
+        set((s) => ({
+          sessionId: s.sessionId || sessionId,
+          focusOptions,
+          selectedFocusId: focusOptions[0]?.id || "",
+          isConfigurationReady: focusOptions.length > 0,
+          activities: pushActivity(
+            s.activities,
+            "关注切面已生成",
+            `主持人已给出 ${focusOptions.length} 个可选讨论切面。`,
+            "done",
+          ),
+        })),
 
-  setSelectedFocus: (selectedFocusId) => set({ selectedFocusId }),
-  setIntensityDraft: (intensityDraft) => set({ intensityDraft }),
-  setUserContextDraft: (userContextDraft) => set({ userContextDraft }),
+      setSelectedFocus: (selectedFocusId) => set({ selectedFocusId }),
+      setIntensityDraft: (intensityDraft) => set({ intensityDraft }),
+      setUserContextDraft: (userContextDraft) => set({ userContextDraft }),
 
-  setDebaters: (sessionId, debaters, debateDeadlineMs, mainCount) =>
-    set((s) => {
-      // Split using backend-provided main_count, or fallback to all
-      const mc = mainCount ?? debaters.length;
-      const selected = debaters.slice(0, mc);
-      const subs = debaters.slice(mc);
-      return {
-        sessionId: s.sessionId || sessionId,
-        debateDeadlineMs,
-        debaters: selected,
-        substituteDebaters: subs,
-        phase: "drafting",
-        isConfigurationReady: false,
-        activities: pushActivity(
-          s.activities,
-          "辩手阵列已建立",
-          `已生成 ${selected.length} 位主力 + ${subs.length} 位替补辩手。`,
-          "done",
-        ),
-      };
-    }),
+      setDebaters: (sessionId, debaters, debateDeadlineMs, mainCount) =>
+        set((s) => {
+          const mc = mainCount ?? debaters.length;
+          const selected = debaters.slice(0, mc);
+          const subs = debaters.slice(mc);
+          return {
+            sessionId: s.sessionId || sessionId,
+            debateDeadlineMs,
+            debaters: selected,
+            substituteDebaters: subs,
+            phase: "drafting",
+            isConfigurationReady: false,
+            activities: pushActivity(
+              s.activities,
+              "辩手阵列已建立",
+              `已生成 ${selected.length} 位主力 + ${subs.length} 位替补辩手。`,
+              "done",
+            ),
+          };
+        }),
 
-  setAvatarImages: (avatars) =>
-    set((s) => ({
-      debaters: s.debaters.map((d) =>
-        avatars[d.name] ? { ...d, avatar_url: avatars[d.name] } : d,
-      ),
-      substituteDebaters: s.substituteDebaters.map((d) =>
-        avatars[d.name] ? { ...d, avatar_url: avatars[d.name] } : d,
-      ),
-    })),
+      setAvatarImages: (avatars) =>
+        set((s) => ({
+          debaters: s.debaters.map((d) =>
+            avatars[d.name] ? { ...d, avatar_url: avatars[d.name] } : d,
+          ),
+          substituteDebaters: s.substituteDebaters.map((d) =>
+            avatars[d.name] ? { ...d, avatar_url: avatars[d.name] } : d,
+          ),
+        })),
 
-  swapDebater: (selectedIndex, subIndex) =>
-    set((s) => {
-      const newSelected = [...s.debaters];
-      const newSubs = [...s.substituteDebaters];
-      const temp = newSelected[selectedIndex];
-      newSelected[selectedIndex] = newSubs[subIndex];
-      newSubs[subIndex] = temp;
-      return { debaters: newSelected, substituteDebaters: newSubs };
-    }),
+      swapDebater: (selectedIndex, subIndex) =>
+        set((s) => {
+          const newSelected = [...s.debaters];
+          const newSubs = [...s.substituteDebaters];
+          const temp = newSelected[selectedIndex];
+          newSelected[selectedIndex] = newSubs[subIndex];
+          newSubs[subIndex] = temp;
+          return { debaters: newSelected, substituteDebaters: newSubs };
+        }),
 
-  setPreparingTurn: (sessionId, speaker, turnId, stage) =>
-    set((s) => ({
-      sessionId: s.sessionId || sessionId,
-      // Don't override drafting phase — user must confirm lineup first
-      phase: s.phase === "drafting" ? "drafting" : "arena",
-      activeSpeaker: speaker,
-      activeTurnId: turnId,
-      preparingTurn: { speaker, turnId, stage },
-      activities: pushActivity(
-        s.activities,
-        `${speaker} 正在准备发言`,
-        `第 ${turnId + 1} 轮即将开始。`,
-        "live",
-      ),
-    })),
+      setPreparingTurn: (sessionId, speaker, turnId, stage) =>
+        set((s) => ({
+          sessionId: s.sessionId || sessionId,
+          phase: "arena",
+          activeSpeaker: speaker,
+          activeTurnId: turnId,
+          preparingTurn: { speaker, turnId, stage },
+          activities: pushActivity(
+            s.activities,
+            `${speaker} 正在准备发言`,
+            `第 ${turnId + 1} 轮即将开始。`,
+            "live",
+          ),
+        })),
 
-  appendToken: (sessionId, speaker, turnId, token, stage) => {
-    const key = `${speaker}-${turnId}`;
-    set((s) => {
-      const firstTokenOfTurn = !s.liveBuffers[key];
-      const preparingTurnMatches =
-        s.preparingTurn?.speaker === speaker && s.preparingTurn?.turnId === turnId;
-      return {
-        sessionId: s.sessionId || sessionId,
-        // Don't override drafting phase — user must confirm lineup first
-        phase: s.phase === "drafting" ? "drafting" : "arena",
-        activeSpeaker: speaker,
-        activeTurnId: turnId,
-        preparingTurn: preparingTurnMatches ? null : s.preparingTurn,
-        liveBuffers: {
-          ...s.liveBuffers,
-          [key]: {
-            content: (s.liveBuffers[key]?.content || "") + token,
-            stage: stage || s.liveBuffers[key]?.stage,
+      appendToken: (sessionId, speaker, turnId, token, stage) => {
+        const key = `${speaker}-${turnId}`;
+        const s = get();
+        const firstTokenOfTurn = !s.liveBuffers[key];
+        const preparingTurnMatches =
+          s.preparingTurn?.speaker === speaker && s.preparingTurn?.turnId === turnId;
+        set({
+          sessionId: s.sessionId || sessionId,
+          phase: "arena",
+          activeSpeaker: speaker,
+          activeTurnId: turnId,
+          preparingTurn: preparingTurnMatches ? null : s.preparingTurn,
+          liveBuffers: {
+            ...s.liveBuffers,
+            [key]: {
+              content: (s.liveBuffers[key]?.content || "") + token,
+              stage: stage || s.liveBuffers[key]?.stage,
+            },
           },
-        },
-        activities: firstTokenOfTurn
-          ? pushActivity(s.activities, `${speaker} 开始发言`, `第 ${turnId + 1} 轮正在生成中。`, "live")
-          : s.activities,
-      };
-    });
-  },
+          activities: firstTokenOfTurn
+            ? pushActivity(s.activities, `${speaker} 开始发言`, `第 ${turnId + 1} 轮正在生成中。`, "live")
+            : s.activities,
+        });
+      },
 
-  finalizeTurn: (sessionId, speaker, turnId, fullContent, stage) => {
-    const key = `${speaker}-${turnId}`;
-    set((s) => {
-      const nextBuffers = { ...s.liveBuffers };
-      delete nextBuffers[key];
-      const newLine: DebateLine = { key, speaker, turnId, content: fullContent, stage };
-      const stageKey = stage || "free_debate";
-      const currentStageLines = s.stageLines[stageKey] || [];
+      finalizeTurn: (sessionId, speaker, turnId, fullContent, stage) => {
+        const key = `${speaker}-${turnId}`;
+        const s = get();
+        const nextBuffers = { ...s.liveBuffers };
+        delete nextBuffers[key];
+        const newLine: DebateLine = { key, speaker, turnId, content: fullContent, stage };
+        const stageKey = stage || "free_debate";
+        const msg: TranscriptMessage = {
+          id: key,
+          timestamp: new Date(),
+          speaker,
+          content: fullContent,
+          stage: (stage || "free_debate") as TranscriptMessage["stage"],
+          turnId,
+        };
+        set({
+          sessionId: s.sessionId || sessionId,
+          activeSpeaker: s.activeSpeaker === speaker && s.activeTurnId === turnId ? "" : s.activeSpeaker,
+          activeTurnId: s.activeSpeaker === speaker && s.activeTurnId === turnId ? null : s.activeTurnId,
+          preparingTurn:
+            s.preparingTurn?.speaker === speaker && s.preparingTurn?.turnId === turnId ? null : s.preparingTurn,
+          liveBuffers: nextBuffers,
+          lines: [...s.lines, newLine],
+          stageLines: { ...s.stageLines, [stageKey]: [...(s.stageLines[stageKey] || []), newLine] },
+          transcript: [...s.transcript, msg],
+          activities: pushActivity(s.activities, `${speaker} 完成发言`, `第 ${turnId + 1} 轮已写入记录。`, "done"),
+        });
+      },
 
-      // Build transcript message
-      const msg: TranscriptMessage = {
-        id: key,
-        timestamp: new Date(),
-        speaker,
-        content: fullContent,
-        stage: (stage || "free_debate") as TranscriptMessage["stage"],
-        turnId,
-      };
+      appendHostSummary: (chunk) =>
+        set((s) => ({ hostSummary: s.hostSummary + chunk, phase: "summary" })),
 
-      return {
-        sessionId: s.sessionId || sessionId,
-        activeSpeaker: s.activeSpeaker === speaker && s.activeTurnId === turnId ? "" : s.activeSpeaker,
-        activeTurnId: s.activeSpeaker === speaker && s.activeTurnId === turnId ? null : s.activeTurnId,
-        preparingTurn:
-          s.preparingTurn?.speaker === speaker && s.preparingTurn?.turnId === turnId ? null : s.preparingTurn,
-        liveBuffers: nextBuffers,
-        lines: [...s.lines, newLine],
-        stageLines: { ...s.stageLines, [stageKey]: [...currentStageLines, newLine] },
-        transcript: [...s.transcript, msg],
-        activities: pushActivity(s.activities, `${speaker} 完成发言`, `第 ${turnId + 1} 轮已写入记录。`, "done"),
-      };
-    });
-  },
+      markStopRequested: () =>
+        set((s) => ({
+          activities: pushActivity(
+            s.activities,
+            "已请求提前结束",
+            "系统会在当前轮次结束后进入主持人总结。",
+            "neutral",
+          ),
+        })),
 
-  appendHostSummary: (chunk) =>
-    set((s) => ({
-      hostSummary: s.hostSummary + chunk,
-      phase: "summary",
-    })),
+      setDone: (sessionId, reportPath) =>
+        set((s) => ({
+          status: "done",
+          backendPhase: "complete",
+          phaseLabel: "报告已生成",
+          phaseDetail: "主持人总结完成，本轮辩论已归档。",
+          phase: "summary",
+          sessionId,
+          reportPath,
+          activeSpeaker: "",
+          activeTurnId: null,
+          preparingTurn: null,
+          isConfigurationReady: false,
+          activities: pushActivity(
+            s.activities,
+            "本轮辩论已完成",
+            "可继续阅读报告，或发起下一轮辩论。",
+            "done",
+          ),
+        })),
 
-  markStopRequested: () =>
-    set((s) => ({
-      activities: pushActivity(
-        s.activities,
-        "已请求提前结束",
-        "系统会在当前轮次结束后进入主持人总结。",
-        "neutral",
-      ),
-    })),
+      setReportMarkdown: (text) => set({ reportMarkdown: text }),
+      setStructuredReport: (report) => set({ structuredReport: report }),
 
-  setDone: (sessionId, reportPath) =>
-    set((s) => ({
-      status: "done",
-      backendPhase: "complete",
-      phaseLabel: "报告已生成",
-      phaseDetail: "主持人总结完成，本轮辩论已归档。",
-      phase: "summary",
-      sessionId,
-      reportPath,
-      activeSpeaker: "",
-      activeTurnId: null,
-      preparingTurn: null,
-      isConfigurationReady: false,
-      activities: pushActivity(
-        s.activities,
-        "本轮辩论已完成",
-        "可继续阅读报告，或发起下一轮辩论。",
-        "done",
-      ),
-    })),
+      setError: (msg) =>
+        set((s) => ({
+          status: "error",
+          backendPhase: "error",
+          phaseLabel: "流程异常",
+          phaseDetail: msg,
+          errorMessage: msg,
+          preparingTurn: null,
+          activities: pushActivity(s.activities, "发生错误", msg, "error"),
+        })),
 
-  setReportMarkdown: (text) => set({ reportMarkdown: text }),
-  setStructuredReport: (report) => set({ structuredReport: report }),
+      reset: () =>
+        set({ ...ephemeralState, ...persistedState }),
 
-  setError: (msg) =>
-    set((s) => ({
-      status: "error",
-      backendPhase: "error",
-      phaseLabel: "流程异常",
-      phaseDetail: msg,
-      errorMessage: msg,
-      preparingTurn: null,
-      activities: pushActivity(s.activities, "发生错误", msg, "error"),
-    })),
+      setFollowUpTarget: (target) => set({ followUpTarget: target }),
 
-  reset: () => set({ ...initialState }),
+      addFollowUpMessage: (message) =>
+        set((s) => ({
+          followUpMessages: [...s.followUpMessages, message],
+          followUpLiveResponse: "",
+          activities: pushActivity(
+            s.activities,
+            `向 ${message.target_role} 提问`,
+            message.question.slice(0, 50) + (message.question.length > 50 ? "..." : ""),
+            "live",
+          ),
+        })),
 
-  // Follow-up actions
-  setFollowUpTarget: (target) => set({ followUpTarget: target }),
+      appendFollowUpToken: (followUpId, token) =>
+        set((s) => ({
+          followUpLiveResponse: s.followUpLiveResponse + token,
+          followUpMessages: s.followUpMessages.map((m) =>
+            m.id === followUpId ? { ...m, response: m.response + token } : m,
+          ),
+        })),
 
-  addFollowUpMessage: (message) =>
-    set((s) => ({
-      followUpMessages: [...s.followUpMessages, message],
-      followUpLiveResponse: "",
-      activities: pushActivity(
-        s.activities,
-        `向 ${message.target_role} 提问`,
-        message.question.slice(0, 50) + (message.question.length > 50 ? "..." : ""),
-        "live",
-      ),
-    })),
+      finalizeFollowUp: (followUpId, fullResponse) =>
+        set((s) => ({
+          followUpLiveResponse: "",
+          isFollowUpStreaming: false,
+          followUpMessages: s.followUpMessages.map((m) =>
+            m.id === followUpId ? { ...m, response: fullResponse, isStreaming: false } : m,
+          ),
+          activities: pushActivity(
+            s.activities,
+            "跟进问题已回答",
+            fullResponse.slice(0, 50) + (fullResponse.length > 50 ? "..." : ""),
+            "done",
+          ),
+        })),
 
-  appendFollowUpToken: (followUpId, token) =>
-    set((s) => ({
-      followUpLiveResponse: s.followUpLiveResponse + token,
-      followUpMessages: s.followUpMessages.map((m) =>
-        m.id === followUpId ? { ...m, response: m.response + token } : m,
-      ),
-    })),
-
-  finalizeFollowUp: (followUpId, fullResponse) =>
-    set((s) => ({
-      followUpLiveResponse: "",
-      isFollowUpStreaming: false,
-      followUpMessages: s.followUpMessages.map((m) =>
-        m.id === followUpId ? { ...m, response: fullResponse, isStreaming: false } : m,
-      ),
-      activities: pushActivity(
-        s.activities,
-        "跟进问题已回答",
-        fullResponse.slice(0, 50) + (fullResponse.length > 50 ? "..." : ""),
-        "done",
-      ),
-    })),
-
-  setFollowUpStreaming: (isStreaming) => set({ isFollowUpStreaming: isStreaming }),
-}));
+      setFollowUpStreaming: (isStreaming) => set({ isFollowUpStreaming: isStreaming }),
+    }),
+    {
+      name: "debate-session",
+      storage: createJSONStorage(() => sessionStorage),
+      partialize: (state) => ({
+        phase: state.phase,
+        status: state.status,
+        topic: state.topic,
+        debateLanguage: state.debateLanguage,
+        sessionId: state.sessionId,
+        debateDeadlineMs: state.debateDeadlineMs,
+        hostResearch: state.hostResearch,
+        focusOptions: state.focusOptions,
+        selectedFocusId: state.selectedFocusId,
+        intensityDraft: state.intensityDraft,
+        userContextDraft: state.userContextDraft,
+        isConfigurationReady: state.isConfigurationReady,
+        debaters: state.debaters,
+        substituteDebaters: state.substituteDebaters,
+        hostSummary: state.hostSummary,
+        lines: state.lines,
+        currentStage: state.currentStage,
+        transcript: state.transcript,
+        reportPath: state.reportPath,
+        reportMarkdown: state.reportMarkdown,
+        structuredReport: state.structuredReport,
+        followUpMessages: state.followUpMessages,
+      }),
+    },
+  ),
+);

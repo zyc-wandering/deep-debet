@@ -27,6 +27,16 @@ def _read_sse_events(response):
             data_lines.append(line[6:])
 
 
+def test_make_llm_provider_uses_glm_chat_completions_for_pro():
+    provider = main_module._make_llm_provider(main_module.DebateModelVariant.pro)
+
+    assert provider.base_url == "https://open.bigmodel.cn/api/paas/v4"
+    assert provider.api_key
+    assert provider.model == "glm-5"
+    assert provider.api_style == "chat_completions"
+    assert provider.response_tools == []
+
+
 def test_configure_returns_400_for_invalid_focus_option(tmp_path, monkeypatch):
     store = SessionStore()
     monkeypatch.setattr(main_module, "session_store", store)

@@ -71,11 +71,11 @@ export interface StructuredReport {
   core_arguments: Array<{
     speaker: string;
     stance: string;
-    key_points: string[];
+    key_points: unknown[];
   }>;
   clash_points: Array<{
-    topic: string;
-    positions: Record<string, string>;
+    topic: unknown;
+    positions: Record<string, unknown>;
   }>;
   synthesis: string;
   host_conclusion: string;
@@ -120,6 +120,11 @@ export interface DebateStartRequest {
 export interface DebateConfigureRequest {
   session_id: string;
   pre_debate_config: PreDebateConfig;
+}
+
+export interface DebateConfirmRequest {
+  session_id: string;
+  debater_ids: string[];
 }
 
 export interface FollowUpRequest {

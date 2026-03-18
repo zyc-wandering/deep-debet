@@ -1,6 +1,8 @@
 import { useEffect, useRef } from "react";
 import { Mic, Quote, History, StopCircle } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
+import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { useDebateStore } from "../store/debateStore";
 import { useDebate } from "../hooks/useDebate";
 import Avatar from "./Avatar";
@@ -22,29 +24,31 @@ export default function ArenaPhase() {
   const { stop } = useDebate();
   const transcriptRef = useRef<HTMLDivElement>(null);
   const isZh = debateLanguage === "zh";
+  const isFreeDebateStage = currentStage === "free_debate";
 
-  // Auto-scroll transcript
   useEffect(() => {
     if (transcriptRef.current) {
       transcriptRef.current.scrollTop = transcriptRef.current.scrollHeight;
     }
   }, [transcript, liveBuffers]);
 
-  // Find active debater
   const activeDebater = allDebaters.find((d) => d.name === activeSpeaker);
   const preparingDebater = preparingTurn
     ? allDebaters.find((d) => d.name === preparingTurn.speaker)
     : null;
   const spotlightDebater = activeDebater || preparingDebater;
 
-  // Get live content for current speaker
   const liveContent = Object.entries(liveBuffers)
     .filter(([key]) => key.startsWith(`${activeSpeaker}-`))
     .map(([, val]) => val.content)
     .join("");
 
-  // Count rounds (free_debate turns)
   const freeDebateTurns = lines.filter((l) => l.stage === "free_debate").length;
+
+  const lastContentBySpeaker: Record<string, string> = {};
+  for (const msg of transcript) {
+    lastContentBySpeaker[msg.speaker] = msg.content;
+  }
 
   const stageLabel =
     currentStage === "opening"
@@ -55,21 +59,80 @@ export default function ArenaPhase() {
           ? isZh ? "总结陈词" : "Closing"
           : isZh ? "进行中" : "In Progress";
 
+  const freeDebateTextSizeClass = isFreeDebateStage ? "text-sm md:text-base" : "text-lg md:text-xl";
+  const freeDebateContentSizeClass = isFreeDebateStage ? "text-base md:text-lg" : "text-xl md:text-2xl";
+  const speakingDebaters = allDebaters.filter(
+    (d) => !d.stance.toLowerCase().includes("非正式"),
+  );
+
   return (
-    <div className="flex flex-col lg:flex-row h-[calc(100vh-80px)] -mt-6 -mx-4 bg-arena text-slate-200 overflow-hidden font-sans">
-      {/* Main Arena */}
-      <div className="flex-1 flex flex-col relative">
+    <div className="flex flex-col lg:flex-row h-[calc(100vh-80px)] -mt-6 -mx-4 bg-arena text-slate-200 overflow-hidden font-sans justify-center">
+      {/* Left Column: Speaker Profile (1/3) */}
+      <div className="hidden lg:flex lg:w-1/3 flex-col items-center justify-center p-6 border-r border-slate-800/60 relative z-10 shrink-0">
+        {spotlightDebater ? (
+          <motion.div
+            key={spotlightDebater.id}
+            initial={{ opacity: 0, x: -30, scale: 0.9 }}
+            animate={{ opacity: 1, x: 0, scale: 1 }}
+            transition={{ duration: 0.4, type: "spring" }}
+            className="flex flex-col items-center w-full max-w-sm"
+          >
+            <div className="relative mb-6">
+              <div className="absolute -inset-6 bg-primary/20 rounded-full blur-3xl animate-pulse" />
+              <Avatar
+                debater={spotlightDebater}
+                size="xl"
+                className="border-4 border-primary shadow-[0_0_60px_rgba(212,98,17,0.3)] relative z-10"
+              />
+              <div className="absolute -bottom-3 left-1/2 -translate-x-1/2 bg-primary text-white px-5 py-1.5 rounded-full shadow-xl flex items-center gap-2 border-2 border-slate-900 whitespace-nowrap z-20">
+                <Mic className="w-3.5 h-3.5 animate-pulse" />
+                <span className="text-xs font-bold uppercase tracking-wider">
+                  {isZh ? "发言中" : "Speaking"}
+                </span>
+              </div>
+            </div>
+            <div className="text-center">
+              <h2 className="text-2xl font-black text-white mb-1">{spotlightDebater.name}</h2>
+              <p className="text-primary font-bold uppercase tracking-widest text-xs mb-4">
+                {spotlightDebater.stance}
+              </p>
+              <p className="text-slate-400 text-xs leading-relaxed line-clamp-3 px-2">
+                {spotlightDebater.background}
+              </p>
+            </div>
+          </motion.div>
+        ) : allDebaters.length > 0 ? (
+          <div className="flex flex-col items-center justify-center w-full max-w-sm">
+            <Avatar
+              debater={allDebaters[0]}
+              className="border-4 border-slate-700 opacity-40"
+            />
+            <p className="text-slate-600 text-sm mt-4 italic">
+              {isZh ? "等待辩手就位..." : "Waiting for speakers..."}
+            </p>
+          </div>
+        ) : (
+          <div className="flex flex-col items-center justify-center w-full max-w-sm">
+            <p className="text-slate-600 text-sm italic">
+              {isZh ? "等待辩手就位..." : "Waiting for speakers..."}
+            </p>
+          </div>
+        )}
+      </div>
+
+      {/* Middle Column: Live Speech (1/3) */}
+      <div className="flex-1 flex flex-col relative z-10 min-w-0">
         {/* Header */}
-        <div className="h-16 border-b border-slate-800/60 bg-slate-900/50 flex items-center justify-between px-6 z-10">
-          <div className="flex items-center gap-4">
-            <div className="px-3 py-1 bg-primary text-white text-xs font-bold rounded-full uppercase tracking-wider">
+        <div className="h-16 border-b border-slate-800/60 bg-slate-900/50 flex items-center justify-between px-6 shrink-0">
+          <div className="flex items-center gap-4 min-w-0">
+            <div className="px-3 py-1 bg-primary text-white text-xs font-bold rounded-full uppercase tracking-wider shrink-0">
               {stageLabel}
             </div>
-            <div className="text-sm font-medium text-slate-300 truncate max-w-md" title={topic}>
+            <div className="text-sm font-medium text-slate-300 truncate min-w-0" title={topic}>
               {topic}
             </div>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-4 shrink-0">
             {currentStage === "free_debate" && (
               <div className="flex items-center gap-3">
                 <span className="text-xs text-slate-400 font-medium uppercase tracking-wider">
@@ -92,95 +155,101 @@ export default function ArenaPhase() {
           </div>
         </div>
 
-        {/* Spotlight Area */}
-        <div className="flex-1 flex flex-col md:flex-row items-center justify-center p-6 md:p-12 gap-8 md:gap-16 relative z-10 overflow-y-auto">
-          {/* Active Speaker Profile */}
+        {/* Mobile: speaker profile on top */}
+        <div className="lg:hidden flex items-center gap-4 p-4 border-b border-slate-800/40 bg-slate-900/30">
           {spotlightDebater && (
-            <AnimatePresence mode="wait">
+            <>
+              <Avatar debater={spotlightDebater} size="md" className="border-2 border-primary shrink-0" />
+              <div className="flex flex-col min-w-0">
+                <span className="text-sm font-bold text-white truncate">{spotlightDebater.name}</span>
+                <span className="text-xs text-primary truncate">{spotlightDebater.stance}</span>
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Speech content area */}
+        <div className="flex-1 flex flex-col items-center justify-center p-6 md:p-10 overflow-y-auto">
+          <AnimatePresence mode="wait">
+            {preparingTurn && !liveContent ? (
               <motion.div
-                key={spotlightDebater.id}
-                initial={{ opacity: 0, x: -50, scale: 0.9 }}
-                animate={{ opacity: 1, x: 0, scale: 1 }}
-                exit={{ opacity: 0, x: 50, scale: 0.9 }}
-                transition={{ duration: 0.5, type: "spring" }}
-                className="flex flex-col items-center w-full md:w-1/3 max-w-sm shrink-0"
+                key="preparing"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="w-full max-w-2xl"
               >
-                <div className="relative">
-                  <div className="absolute -inset-4 bg-primary/20 rounded-full blur-2xl animate-pulse" />
-                  <Avatar
-                    debater={spotlightDebater}
-                    size="xl"
-                    className="border-4 border-primary shadow-[0_0_40px_rgba(212,98,17,0.3)]"
-                  />
-                  <div className="absolute -bottom-4 left-1/2 -translate-x-1/2 bg-primary text-white px-6 py-2 rounded-full shadow-xl flex items-center gap-2 border-2 border-slate-900">
-                    <Mic className="w-4 h-4 animate-pulse" />
-                    <span className="text-sm font-bold uppercase tracking-wider">
-                      {isZh ? "发言中" : "Speaking"}
-                    </span>
+                <div className="bg-slate-800/50 border border-slate-700/50 rounded-2xl p-8 flex flex-col items-center justify-center min-h-[180px]">
+                  <div className="flex gap-3 mb-4">
+                    <div className="w-3 h-3 bg-primary rounded-full animate-bounce" />
+                    <div className="w-3 h-3 bg-primary rounded-full animate-bounce" style={{ animationDelay: "0.15s" }} />
+                    <div className="w-3 h-3 bg-primary rounded-full animate-bounce" style={{ animationDelay: "0.3s" }} />
                   </div>
-                </div>
-                <div className="mt-8 text-center">
-                  <h2 className="text-3xl font-black text-white mb-2">{spotlightDebater.name}</h2>
-                  <p className="text-primary font-bold uppercase tracking-widest text-sm">
-                    {spotlightDebater.stance}
+                  <p className="text-slate-400 text-sm font-medium animate-pulse">
+                    {isZh ? "正在组织论点..." : "Formulating argument..."}
                   </p>
                 </div>
               </motion.div>
-            </AnimatePresence>
-          )}
-
-          {/* Speech Content */}
-          <div className="flex-1 w-full max-w-2xl flex flex-col justify-center">
-            {preparingTurn && !liveContent ? (
-              <div className="bg-slate-800/50 border border-slate-700/50 rounded-3xl p-8 md:p-12 flex flex-col items-center justify-center min-h-[250px]">
-                <div className="flex gap-3 mb-4">
-                  <div className="w-4 h-4 bg-primary rounded-full animate-bounce" />
-                  <div
-                    className="w-4 h-4 bg-primary rounded-full animate-bounce"
-                    style={{ animationDelay: "0.15s" }}
-                  />
-                  <div
-                    className="w-4 h-4 bg-primary rounded-full animate-bounce"
-                    style={{ animationDelay: "0.3s" }}
-                  />
-                </div>
-                <p className="text-slate-400 font-medium animate-pulse">
-                  {isZh ? "正在组织论点..." : "Formulating argument..."}
-                </p>
-              </div>
             ) : liveContent ? (
-              <AnimatePresence mode="wait">
-                <motion.div
-                  key={`live-${activeSpeaker}`}
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.5, delay: 0.2 }}
-                  className="bg-slate-800/80 backdrop-blur-xl border border-slate-700 rounded-3xl p-8 md:p-12 shadow-2xl relative"
-                >
-                  <Quote className="absolute top-8 left-8 w-16 h-16 text-slate-700/50 rotate-180 -z-10" />
-                  <p className="text-xl md:text-2xl leading-relaxed text-slate-100 font-serif relative z-10 whitespace-pre-wrap">
-                    &ldquo;{liveContent}&rdquo;
-                  </p>
-                </motion.div>
-              </AnimatePresence>
+              <motion.div
+                key={`live-${activeSpeaker}-${preparingTurn?.turnId ?? "none"}`}
+                initial={{ opacity: 0, y: 16 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.3 }}
+                className="w-full max-w-2xl"
+              >
+                <div className="bg-slate-800/80 backdrop-blur-xl border border-slate-700 rounded-2xl p-6 md:p-8 shadow-2xl relative">
+                  <Quote className="absolute top-6 left-6 w-12 h-12 text-slate-700/40 rotate-180 -z-10" />
+                  <div
+                    className={`leading-relaxed text-slate-100 font-serif relative z-10 prose prose-invert max-w-none prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5 prose-headings:text-slate-100 ${freeDebateContentSizeClass}`}
+                  >
+                    <Markdown remarkPlugins={[remarkGfm]}>{liveContent}</Markdown>
+                  </div>
+                </div>
+              </motion.div>
+            ) : activeSpeaker && lastContentBySpeaker[activeSpeaker] ? (
+              <motion.div
+                key={`last-${activeSpeaker}`}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className="w-full max-w-2xl"
+              >
+                <div className="bg-slate-800/40 border border-slate-700/30 rounded-2xl p-6 md:p-8 relative">
+                  <Quote className="absolute top-6 left-6 w-12 h-12 text-slate-700/30 rotate-180 -z-10" />
+                  <div className="text-xs text-slate-500 mb-3 font-medium uppercase tracking-wider">
+                    {activeSpeaker} · {isZh ? "上一轮发言" : "Previous turn"}
+                  </div>
+                  <div
+                    className={`leading-relaxed text-slate-300 font-serif relative z-10 prose prose-invert max-w-none prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5 ${freeDebateTextSizeClass}`}
+                  >
+                    <Markdown remarkPlugins={[remarkGfm]}>{lastContentBySpeaker[activeSpeaker]}</Markdown>
+                  </div>
+                </div>
+              </motion.div>
             ) : transcript.length > 0 ? (
-              <div className="bg-slate-800/40 border border-slate-700/30 rounded-3xl p-8 md:p-12 flex items-center justify-center min-h-[200px]">
-                <p className="text-slate-500 text-lg italic">
+              <div className="w-full max-w-2xl flex items-center justify-center min-h-[150px]">
+                <p className="text-slate-500 text-base italic">
                   {isZh ? "等待下一位发言..." : "Waiting for next speaker..."}
                 </p>
               </div>
-            ) : null}
-          </div>
+            ) : (
+              <div className="w-full max-w-2xl flex items-center justify-center min-h-[150px]">
+                <p className="text-slate-600 text-base italic">
+                  {isZh ? "辩论即将开始..." : "Debate starting soon..."}
+                </p>
+              </div>
+            )}
+          </AnimatePresence>
         </div>
 
         {/* Bench / Roster */}
-        <div className="h-28 border-t border-slate-800/60 bg-slate-900/80 backdrop-blur-md flex items-center justify-start md:justify-center gap-3 px-6 overflow-x-auto z-20 shrink-0">
-          {allDebaters.map((agent) => {
+        <div className="h-24 border-t border-slate-800/60 bg-slate-900/80 backdrop-blur-md flex items-center justify-start md:justify-center gap-3 px-6 overflow-x-auto shrink-0">
+          {speakingDebaters.map((agent) => {
             const isActive = agent.name === activeSpeaker;
             return (
               <div
                 key={agent.id}
-                className={`relative flex items-center gap-3 p-3 rounded-2xl border transition-all duration-300 min-w-[180px] ${
+                className={`relative flex items-center gap-3 p-3 rounded-2xl border transition-all duration-300 min-w-[160px] ${
                   isActive
                     ? "border-primary bg-primary/10 shadow-[0_0_20px_rgba(212,98,17,0.2)]"
                     : "border-slate-800 bg-slate-950/50 opacity-60 hover:opacity-100"
@@ -208,19 +277,18 @@ export default function ArenaPhase() {
           })}
         </div>
 
-        {/* Background Effects */}
         <div className="absolute inset-0 pointer-events-none z-0">
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_50%,_rgba(212,98,17,0.05),_transparent_70%)]" />
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_50%,_rgba(212,98,17,0.04),_transparent_70%)]" />
         </div>
       </div>
 
-      {/* Right Sidebar: Transcript */}
-      <div className="w-full lg:w-96 bg-slate-900 border-l border-slate-800 flex flex-col shrink-0 z-30 shadow-2xl">
-        <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between bg-slate-900/50 backdrop-blur-md">
+      {/* Right Column: Transcript History (1/3) */}
+      <div className="hidden lg:flex lg:w-1/3 bg-slate-900 border-l border-slate-800 flex-col shrink-0 z-30 shadow-2xl">
+        <div className="px-5 py-4 border-b border-slate-800 flex items-center justify-between bg-slate-900/50 backdrop-blur-md shrink-0">
           <div className="flex items-center gap-2">
             <History className="text-primary w-4 h-4" />
             <h3 className="text-xs font-bold uppercase text-slate-400 tracking-wider">
-              {isZh ? "实时记录" : "Live Transcript"}
+              {isZh ? "发言记录" : "Transcript"}
             </h3>
           </div>
           <div className="flex items-center gap-2">
@@ -229,38 +297,39 @@ export default function ArenaPhase() {
           </div>
         </div>
 
-        <div ref={transcriptRef} className="flex-1 overflow-y-auto p-6 space-y-6 scroll-smooth">
+        <div ref={transcriptRef} className="flex-1 overflow-y-auto p-5 space-y-5 scroll-smooth">
           {transcript.map((msg, idx) => {
             const isLatest = idx === transcript.length - 1;
+            const isActive = msg.speaker === activeSpeaker;
             return (
               <div
                 key={msg.id}
-                className={`flex gap-4 ${
-                  isLatest ? "opacity-100" : "opacity-60 hover:opacity-100 transition-opacity"
+                className={`flex gap-3 ${
+                  isActive && isLatest ? "opacity-100" : "opacity-70 hover:opacity-100 transition-opacity"
                 }`}
               >
-                <span className="text-[10px] font-mono text-slate-500 shrink-0 w-12 pt-1">
+                <span className="text-[10px] font-mono text-slate-600 shrink-0 w-10 pt-0.5">
                   {msg.timestamp.toLocaleTimeString([], {
                     hour12: false,
                     hour: "2-digit",
                     minute: "2-digit",
                   })}
                 </span>
-                <div className="flex flex-col gap-1">
+                <div className="flex flex-col gap-0.5 min-w-0">
                   <span
                     className={`text-xs font-bold ${
-                      isLatest ? "text-primary" : "text-slate-300"
+                      isActive && isLatest ? "text-primary" : isActive ? "text-slate-300" : "text-slate-500"
                     }`}
                   >
                     {msg.speaker}
                   </span>
-                  <p
-                    className={`text-sm leading-relaxed ${
-                      isLatest ? "text-slate-200" : "text-slate-400"
+                  <div
+                    className={`leading-relaxed font-serif relative prose prose-invert max-w-none prose-p:my-0.5 prose-ul:my-0 prose-ol:my-0 prose-li:my-0 prose-headings:text-inherit ${
+                      isActive && isLatest ? `text-slate-200 ${freeDebateTextSizeClass}` : "text-slate-500 text-xs"
                     }`}
                   >
-                    {msg.content}
-                  </p>
+                    <Markdown remarkPlugins={[remarkGfm]}>{msg.content}</Markdown>
+                  </div>
                 </div>
               </div>
             );

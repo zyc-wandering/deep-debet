@@ -120,7 +120,7 @@ Your judgment criteria (in priority order):
 
 **对应 Notion 文档**: 八、待优化提示词清单 → 🔧 2. build_research_prompt  
 **设计目的 / Design Purpose**: 引导主持人从搜索材料中生成高质量研究简报，识别关键争点和证据门槛，为后续辩手配置和交锋提供知识基础。  
-**期待结果 / Expected Outcome**: 一份500-800字聚焦争点的研究简报，明确区分已知事实、主要不确定性和证据门槛，而非百科式综述。  
+**期待结果 / Expected Outcome**: 一份约1200字聚焦争点的研究简报，包含丰富的新闻报道和学术数据等事实描述，明确区分已知事实、主要不确定性和证据门槛，而非百科式综述。  
 **主要优化点 / Key Improvements**:
 - 加入Chain of Thought（CoT）要求：分析步骤明确化
 - 增加证据链分析框架：要求识别"决定性证据"vs"辅助性证据"
@@ -141,15 +141,19 @@ Your judgment criteria (in priority order):
 
 ---
 
-请按以下步骤思考，然后生成一份 500-800 字中文研究简报：
+请按以下步骤思考，然后生成一份 **约 1200 字**的中文研究简报：
 
 【第一步：识别核心争点】
 这个议题的根本分歧在哪里？不要列清单，要找到"决定胜负的那一个关键问题"。
 常见争点类型：事实争议（数据、案例）/ 因果争议（机制、路径）/ 价值争议（标准、优先级）/ 边界争议（范围、定义）
 
-【第二步：分类处理证据】
-将材料中的信息分为：
-- 已知事实（有可靠来源支撑）
+【第二步：梳理事实与证据】
+从参考材料和你自身知识中，**尽可能多地**提取与辩题直接相关的：
+- 新闻报道（近年的重要事件、政策变化、官方表态，注明大致时间）
+- 学术研究与权威数据（统计数字、调查结论、机构报告，注明来源）
+- 典型案例（正面和反面的实际案例）
+将以上信息分为：
+- 已知事实（有可靠来源支撑，**必须详细列出具体数据和事件**）
 - 主要不确定性（争议数据或相互矛盾的研究）
 - 待验证部分（搜索材料不足以覆盖，需要标注）
 
@@ -161,13 +165,13 @@ Your judgment criteria (in priority order):
 【输出简报】
 综合以上分析，写出研究简报，必须包含：
 1. 核心争点（本场辩论真正需要解决什么）
-2. 关键事实基线（已知的重要事实，附来源标注）
+2. 关键事实基线（**详细列出**已知的重要事实、新闻事件、学术数据，附来源标注，此部分应占简报篇幅的 40% 以上）
 3. 主要不确定性（材料中存在的争议或缺失）
 4. 论证难度评估（哪类论证更有利，哪类有隐藏风险）
 5. 待验证信号（如果材料不足，明确点出）
 
 禁止：写成百科综述。禁止：罗列与胜负无关的背景信息。
-好的简报：读完后，辩手知道要攻击什么、防守什么。
+好的简报：读完后，辩手知道要攻击什么、防守什么，并且掌握了充足的事实弹药。
 ```
 
 ---
@@ -182,15 +186,19 @@ Reference Materials:
 
 ---
 
-Think through the following steps, then generate a 500-800 word research brief in Chinese:
+Think through the following steps, then generate a research brief of **approximately 1200 Chinese characters**:
 
 [STEP 1: IDENTIFY CORE CONTROVERSIES]
 Where is the fundamental disagreement in this topic? Don't list everything — find "the one question that decides the debate."
 Common controversy types: factual disputes (data, cases) / causal disputes (mechanisms, pathways) / value disputes (standards, priorities) / boundary disputes (scope, definitions)
 
-[STEP 2: CATEGORIZE THE EVIDENCE]
-Classify the materials into:
-- Established facts (reliably sourced)
+[STEP 2: GATHER FACTS AND EVIDENCE]
+From the reference materials and your own knowledge, extract **as many relevant facts as possible**:
+- News coverage (major recent events, policy changes, official statements — note approximate dates)
+- Academic research and authoritative data (statistics, survey results, institutional reports — note sources)
+- Illustrative cases (both supporting and opposing examples)
+Classify the above into:
+- Established facts (reliably sourced — **list specific data points and events in detail**)
 - Major uncertainties (disputed data or contradictory research)
 - Unverified gaps (not covered by available materials — flag these explicitly)
 
@@ -202,13 +210,13 @@ Based on available evidence, analyze:
 [OUTPUT THE BRIEF]
 Synthesize the above into a research brief that must include:
 1. Core controversy (what this debate actually needs to resolve)
-2. Key factual baseline (important established facts, with source notes)
+2. Key factual baseline (**list in detail** the important established facts, news events, and academic data, with source notes — this section should occupy at least 40% of the brief)
 3. Major uncertainties (disputes or gaps in the available materials)
 4. Argument difficulty assessment (which argument types have the edge, which carry hidden risks)
 5. Verification flags (if materials are insufficient, name what is missing)
 
 Prohibited: encyclopedia-style overviews. Prohibited: background information irrelevant to winning or losing.
-A good brief: after reading it, debaters know what to attack and what to defend.
+A good brief: after reading it, debaters know what to attack, what to defend, and have ample factual ammunition.
 ```
 
 ---
@@ -377,11 +385,17 @@ intensity={intensity} 直接影响认知攻击性：
 【辩手设计要求】
 1. 每位辩手必须像真实世界里的利益相关方、分析者、执行者或批评者——不能像抽象标签
 2. 立场必须鲜明，彼此之间存在真实冲突，不能只是措辞不同
-3. 辩手差异来自：激励结构、分析框架、机构位置、风险偏好、时间尺度
-4. 允许局部修正后重建，但禁止滑向"大家都对"
-5. 不要顺着用户可能期待的答案造角色
-6. 必须明确写出每位辩手的年龄、人种/族裔与人格特征，这些信息要和其身份背景、议题语境一致
-7. 辩手姓名不需要固定为中文姓名；应根据辩题涉及的地区、文化、制度背景灵活选择合适姓名，允许任何人种、民族和命名风格
+3. 阵营强制对称规则（必须执行）：
+   - {debater_count} 必须为偶数（2、4、6……），系统层已保证，此处再次强制确认
+   - 正方（支持/赞同/主张A）与反方（反对/质疑/主张B）的辩手数量必须相等：各占 {debater_count} / 2 人
+   - 禁止任何导致单方人数超过对方的配置，哪怕辩手背景和风格不同
+   - 在JSON输出中，为每位辩手新增 "side" 字段：取值为 "pro"（正方）或 "con"（反方）
+   - "side" 分配原则：基于辩手的 stance 内容判断，正方支持议题中的前半立场，反方支持后半立场；若辩题无明确"前半/后半"，由主持人简报中的"核心争点"判断双方阵营
+4. 辩手差异来自：激励结构、分析框架、机构位置、风险偏好、时间尺度
+5. 允许局部修正后重建，但禁止滑向"大家都对"
+6. 不要顺着用户可能期待的答案造角色
+7. 必须明确写出每位辩手的年龄、人种/族裔与人格特征，这些信息要和其身份背景、议题语境一致
+8. 辩手姓名不需要固定为中文姓名；应根据辩题涉及的地区、文化、制度背景灵活选择合适姓名，允许任何人种、民族和命名风格
 
 【设计质量自检】
 每位辩手设计完成后，检查：
@@ -449,11 +463,23 @@ intensity={intensity} directly modulates cognitive aggressiveness:
 [DEBATER DESIGN REQUIREMENTS]
 1. Each debater must resemble a real-world stakeholder, analyst, practitioner, or critic — not an abstract label
 2. Positions must be clear and in genuine conflict with each other — not merely different in wording
-3. Debater differences stem from: incentive structures, analytical frameworks, institutional positions, risk preferences, time horizons
-4. Local concessions followed by rebuilding are allowed; drifting into "everyone is right" is prohibited
-5. Do not create characters that simply confirm the user's expected answer
-6. You must explicitly specify each debater's age, ethnicity/racial background, and personality traits in a way that matches their identity and the topic context
-7. Names do not need to be Chinese names; choose names flexibly based on the topic's geography, culture, and institutional context, allowing any ethnicity, nationality, or naming style when appropriate
+3. Mandatory symmetric alignment rule (must be enforced):
+   - {debater_count} must be an even number (2, 4, 6…); the system layer guarantees this, 
+     and this prompt enforces it as a second check
+   - The number of pro-side debaters (supporting / affirming position A) must equal 
+     the number of con-side debaters (opposing / challenging / affirming position B): 
+     exactly {debater_count} / 2 each
+   - No configuration that gives one side more debaters than the other is allowed, 
+     regardless of how different debaters' backgrounds or styles are
+   - Add a "side" field to each debater's JSON output: value must be "pro" or "con"
+   - "side" assignment logic: based on the debater's stance content — pro supports the first 
+     position in the topic framing, con supports the second; if the topic has no clear 
+     first/second framing, use the host brief's core controversy to determine camps
+4. Debater differences stem from: incentive structures, analytical frameworks, institutional positions, risk preferences, time horizons
+5. Local concessions followed by rebuilding are allowed; drifting into "everyone is right" is prohibited
+6. Do not create characters that simply confirm the user's expected answer
+7. You must explicitly specify each debater's age, ethnicity/racial background, and personality traits in a way that matches their identity and the topic context
+8. Names do not need to be Chinese names; choose names flexibly based on the topic's geography, culture, and institutional context, allowing any ethnicity, nationality, or naming style when appropriate
 
 [DESIGN QUALITY SELF-CHECK]
 After designing each debater, verify:
@@ -700,7 +726,10 @@ Bad report: All sides' views are listed but no judgment is made; or the verdict 
 "core_arguments": 数组，每项包含：
   - "speaker": 辩手姓名
   - "stance": 一句话核心立场（不超过30字）
-  - "key_points": 字符串数组，列出2-3个最重要的论点
+  - "key_points": 对象数组，每项包含：
+    - "point": 字符串，论点内容摘要（50字以内）
+    - "evidence_source": 字符串，支撑该论点的主要来源（可填参考资料标题、机构名称，或"推断"）
+    - "evidence_strength": 枚举值，只允许："strong" / "moderate" / "weak"
 
 "clash_points": 数组，每项包含：
   - "topic": 交锋点名称（10字以内）
@@ -741,14 +770,17 @@ Output a JSON object that strictly contains the following fields. Return only JS
 
 Field specifications:
 
-"background_summary": string, max 100 Chinese characters, summarizing the core issue and main disagreement.
+"background_summary": string, max 100 words, summarizing the core issue and main disagreement.
   Good example: "A debate on carbon tax policy, with core disagreement on whether economic costs exceed emissions benefits and whether costs fall disproportionately on lower-income groups."
   Bad example: "This is a debate about carbon tax."
 
 "core_arguments": array, each item contains:
   - "speaker": debater's name
-  - "stance": core position in one sentence (max 30 Chinese characters)
-  - "key_points": string array, listing 2-3 most important arguments
+  - "stance": core position in one sentence (max 30 words)
+  - "key_points": string array，each item mush have：
+    - "point": string，论点内容摘要（50 words max）
+    - "evidence_source": string，支撑该论点的主要来源（可填参考资料标题、机构名称，或"推断"）
+    - "evidence_strength": enum，allowed："strong" / "moderate" / "weak"
 
 "clash_points": array, each item contains:
   - "topic": clash point name (max 10 Chinese characters)
@@ -875,7 +907,7 @@ Response requirements:
 - 从角色描述升级为认知框架定义（定义HOW to think，不只是WHO you are）
 - 引入"论证四环节"结构（Claim→Warrant→Evidence→Impact）
 - 明确"有效让步"的定义（让步必须锐化立场，不能松动立场）
-- 字数限制从240-320调整为180-280（更高信息密度）
+- 字数限制调整为350-500（允许更充分的论证展开）
 
 **模板变量 / Template Variables**: `{config.name}`, `{config.age}`, `{config.ethnicity}`, `{config.background}`, `{config.stance}`, `{config.personality}`, `{config.speaking_style}`
 
@@ -927,7 +959,7 @@ Response requirements:
 
 【输出规则】
 - 语言：中文
-- 长度：每轮约 180-280 个中文字符，信息密度要高
+- 长度：每轮约 350-500 个汉字，信息密度要高
 - 目标：证明你的立场在证据压力下比对手更能存活
 ```
 
@@ -979,7 +1011,7 @@ Check 4: What pressure did I add this turn?
 
 [OUTPUT RULES]
 - Language: Chinese
-- Length: approximately 180-280 Chinese characters per turn, high information density
+- Length: approximately 350-500 Chinese characters per turn, high information density
 - Goal: prove that your position survives evidentiary pressure better than the opponent's
 ```
 
@@ -1016,6 +1048,11 @@ Check 4: What pressure did I add this turn?
 - mild（克制）：聚焦最关键的逻辑漏洞，精准指出，克制但坚定。给对手重建空间，观察其如何回应。
 - balanced（对抗）：主动寻找对手论证的前提漏洞，持续施压，坚定拒绝仅停留在表面的修正。
 - intense（高压）：每轮必须拆解对手至少一个底层前提，持续追问因果链的断裂点，不给逃避空间，但所有攻击必须有证据或逻辑支撑。
+
+搜索状态：{enable_debater_search}
+搜索说明：
+- 若为 true：每轮发言中，凡使用了实时参考资料的句子，必须在句末插入 [来源：标题] 标记；凡无来源的核心论断，必须标注 [推断，无直接来源]
+- 若为 false：不强制要求来源标注，但论证的逻辑严密性要求不变
 
 [可选焦点块]
 本场聚焦：{focus_name} — {focus_description}
@@ -1070,6 +1107,14 @@ Intensity explanation:
 - mild (restrained): Focus on the most critical logical gaps; point them out precisely and with restraint. Give the opponent space to rebuild; observe how they respond.
 - balanced (adversarial): Actively seek the premise gaps in opponents' arguments; maintain continuous pressure; firmly reject revisions that only address the surface.
 - intense (high pressure): Each turn must dismantle at least one underlying premise of the opponent's argument; persistently probe causal chain breakpoints; leave no escape room — but all attacks must be supported by evidence or logic.
+
+Search Status: {enable_debater_search}
+Search instruction:
+- If true: for every sentence in your turn that draws on real-time reference materials, 
+  insert a [Source: title] marker at the end; for every core assertion that has no 
+  reference support, insert [Inference, no direct source]
+- If false: source citation markers are not required, but the logical rigor standard 
+  for argumentation remains unchanged
 
 [OPTIONAL FOCUS BLOCK]
 This debate's focus: {focus_name} — {focus_description}
@@ -1553,6 +1598,19 @@ Response guidance:
 - 这条材料的来源可靠性如何？（权威机构 / 研究论文 / 新闻报道 / 评论文章）
 - 这条材料的结论是否直接支持我的论点，还是需要额外推断？
 - 对手能如何反驳这条材料？我能提前堵住这个反驳吗？
+
+【引用追踪要求】（搜索已启用时强制执行）
+
+当你在发言中使用了某条参考资料的数据、结论或案例，必须在该句末尾插入引用标记：
+  格式：[来源：{ref.title}]
+  示例："WEF预测到2030年净增7800万岗位[来源：WEF Future of Jobs 2025]，但这一预测基于......"
+
+如果你的某个核心论点没有可引用的参考资料支撑，必须明确标注：
+  格式：[推断，无直接来源]
+  示例："企业更倾向于解雇再培训成本，而非承担[推断，无直接来源]，其背后逻辑是......"
+
+禁止：使用了材料但不标注；或标注了来源但未真正整合到论证逻辑中。
+好的引用：引用出现在具体论点句末，而非段落末尾的笼统注释。
 ```
 
 ---
@@ -1592,6 +1650,24 @@ Before using a piece of material, ask yourself:
 - How reliable is the source? (authoritative institution / research paper / news report / opinion article)
 - Does the material's conclusion directly support my argument, or does it require additional inference?
 - How could the opponent rebut this material? Can I preemptively block that rebuttal?
+
+[CITATION TRACKING REQUIREMENT — mandatory when search is enabled]
+
+When you use data, conclusions, or cases from a reference material in your statement, 
+you must insert a citation marker at the end of that sentence:
+  Format: [Source: {ref.title}]
+  Example: "WEF projects a net gain of 78 million jobs by 2030[Source: WEF Future of Jobs 2025], 
+            however this projection assumes..."
+
+If a core claim has no reference material to support it, explicitly mark it:
+  Format: [Inference, no direct source]
+  Example: "Firms systematically prefer layoffs over retraining costs[Inference, no direct source] 
+            because the incentive structure..."
+
+Prohibited: using material without citation; or citing a source but not actually integrating 
+            it into the argument logic.
+Good citation: marker appears at the end of the specific claim sentence, not as 
+               a generic footnote at the end of a paragraph.
 ```
 
 ---

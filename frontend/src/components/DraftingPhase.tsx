@@ -1,19 +1,30 @@
+import { useState } from "react";
 import { Users, UserSearch, ArrowRightLeft, Rocket } from "lucide-react";
 import { motion } from "motion/react";
 import { useDebateStore } from "../store/debateStore";
+import { useDebate } from "../hooks/useDebate";
 import Avatar from "./Avatar";
 
 export default function DraftingPhase() {
   const debaters = useDebateStore((s) => s.debaters);
   const substituteDebaters = useDebateStore((s) => s.substituteDebaters);
   const swapDebater = useDebateStore((s) => s.swapDebater);
-  const setPhase = useDebateStore((s) => s.setPhase);
+  const sessionId = useDebateStore((s) => s.sessionId);
   const debateLanguage = useDebateStore((s) => s.debateLanguage);
 
+  const { confirm } = useDebate();
   const isZh = debateLanguage === "zh";
+  const [openSwapIdx, setOpenSwapIdx] = useState<number | null>(null);
+  const [confirming, setConfirming] = useState(false);
 
   const handleStart = () => {
-    setPhase("arena");
+    if (!sessionId || confirming) return;
+    setConfirming(true);
+    // Send confirmed debater IDs to backend to start the debate
+    confirm({
+      session_id: sessionId,
+      debater_ids: debaters.map((d) => d.id),
+    });
   };
 
   return (
@@ -96,24 +107,35 @@ export default function DraftingPhase() {
                 <div className="flex-1">
                   <div className="flex items-center justify-between mb-1">
                     <h4 className="font-bold">{sub.name}</h4>
-                    <div className="relative group/swap">
-                      <button className="text-xs font-bold text-primary flex items-center gap-1 hover:underline cursor-pointer">
+                    <div className="relative">
+                      <button
+                        onClick={() => setOpenSwapIdx(openSwapIdx === subIdx ? null : subIdx)}
+                        className="text-xs font-bold text-primary flex items-center gap-1 hover:underline cursor-pointer"
+                      >
                         {isZh ? "替换" : "REPLACE"} <ArrowRightLeft className="w-3 h-3" />
                       </button>
-                      <div className="absolute right-0 top-full mt-2 bg-white border border-slate-200 shadow-xl rounded-lg p-2 hidden group-hover/swap:block z-10 w-48">
-                        <p className="text-xs font-bold text-slate-500 mb-2">
-                          {isZh ? "替换:" : "Swap with:"}
-                        </p>
-                        {debaters.map((sel, selIdx) => (
-                          <button
-                            key={sel.id}
-                            onClick={() => swapDebater(selIdx, subIdx)}
-                            className="w-full text-left px-2 py-1 text-sm hover:bg-primary/10 hover:text-primary rounded cursor-pointer"
-                          >
-                            {sel.name}
-                          </button>
-                        ))}
-                      </div>
+                      {openSwapIdx === subIdx && (
+                        <>
+                          <div className="fixed inset-0 z-10" onClick={() => setOpenSwapIdx(null)} />
+                          <div className="absolute right-0 top-full mt-2 bg-white border border-slate-200 shadow-xl rounded-lg p-2 z-20 w-48">
+                            <p className="text-xs font-bold text-slate-500 mb-2">
+                              {isZh ? "替换:" : "Swap with:"}
+                            </p>
+                            {debaters.map((sel, selIdx) => (
+                              <button
+                                key={sel.id}
+                                onClick={() => {
+                                  swapDebater(selIdx, subIdx);
+                                  setOpenSwapIdx(null);
+                                }}
+                                className="w-full text-left px-2 py-1 text-sm hover:bg-primary/10 hover:text-primary rounded cursor-pointer"
+                              >
+                                {sel.name}
+                              </button>
+                            ))}
+                          </div>
+                        </>
+                      )}
                     </div>
                   </div>
                   <p className="text-[10px] font-bold text-primary/70 uppercase tracking-widest mb-1">
@@ -142,9 +164,16 @@ export default function DraftingPhase() {
           </div>
           <button
             onClick={handleStart}
-            className="flex-1 md:flex-none px-12 h-14 rounded-xl bg-primary text-white font-bold hover:opacity-90 transition-all flex items-center justify-center gap-3 shadow-lg shadow-primary/20 cursor-pointer"
+            disabled={confirming}
+            className={`flex-1 md:flex-none px-12 h-14 rounded-xl text-white font-bold transition-all flex items-center justify-center gap-3 shadow-lg shadow-primary/20 ${
+              confirming
+                ? "bg-primary/50 cursor-not-allowed"
+                : "bg-primary hover:opacity-90 cursor-pointer"
+            }`}
           >
-            {isZh ? "确认阵容 & 开始辩论" : "Confirm & Start Debate"}
+            {confirming
+              ? (isZh ? "正在启动辩论…" : "Starting Debate…")
+              : (isZh ? "确认阵容 & 开始辩论" : "Confirm & Start Debate")}
             <Rocket className="w-5 h-5" />
           </button>
         </div>

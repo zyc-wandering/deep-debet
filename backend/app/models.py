@@ -8,6 +8,9 @@ from uuid import uuid4
 from pydantic import BaseModel, Field, model_validator
 
 
+SUPPORTED_DEBATER_COUNTS = (2, 4, 6, 8)
+
+
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -15,6 +18,7 @@ def utc_now() -> datetime:
 class SessionState(str, Enum):
     running = "running"
     configuring = "configuring"
+    drafting = "drafting"
     stopped = "stopped"
     done = "done"
     error = "error"
@@ -56,6 +60,14 @@ class DebaterConfig(BaseModel):
     speaking_style: str = "direct"
     avatar_emoji: str = "🎙️"
     avatar_url: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def coerce_age_to_str(cls, values: Any) -> Any:
+        """LLM may return age as int; coerce to string."""
+        if isinstance(values, dict) and "age" in values:
+            values["age"] = str(values["age"])
+        return values
 
 
 class FocusOption(BaseModel):
@@ -105,16 +117,20 @@ class DebateMessage(BaseModel):
 
 class DebateStartRequest(BaseModel):
     topic: str = Field(min_length=5, max_length=240)
-    debater_count: int = Field(default=3, ge=2, le=5)
+    debater_count: int = Field(default=4, ge=2, le=8)
     time_limit_sec: int = Field(default=1800, ge=60, le=1800)
     max_turns: int = Field(default=24, ge=4, le=80)
-    enable_debater_search: bool = False
+    enable_debater_search: bool = True
     debate_language: DebateLanguage = DebateLanguage.zh
     model_variant: DebateModelVariant = DebateModelVariant.lite
     fun_mode: str = "persona_clash"
 
     @model_validator(mode="after")
-    def validate_fun_mode(self) -> "DebateStartRequest":
+    def validate_request(self) -> "DebateStartRequest":
+        if self.debater_count not in SUPPORTED_DEBATER_COUNTS:
+            raise ValueError(
+                f"debater_count must be one of: {', '.join(str(count) for count in SUPPORTED_DEBATER_COUNTS)}"
+            )
         allowed = {"persona_clash"}
         if self.fun_mode not in allowed:
             raise ValueError(f"fun_mode must be one of: {sorted(allowed)}")
@@ -125,6 +141,12 @@ class DebateConfigureRequest(BaseModel):
     """Request to configure debate after host research."""
     session_id: str
     pre_debate_config: PreDebateConfig
+
+
+class DebateConfirmRequest(BaseModel):
+    """Request to confirm debater lineup and start the debate."""
+    session_id: str
+    debater_ids: List[str] = Field(default_factory=list)  # ordered main debater IDs; empty = use current lineup
 
 
 class FollowUpRequest(BaseModel):
@@ -169,12 +191,13 @@ class DebateSession(BaseModel):
     state: SessionState = SessionState.running
     started_at: datetime = Field(default_factory=utc_now)
     deadline_at: Optional[datetime] = None
-    debater_count: int = 3
+    debater_count: int = 4
     time_limit_sec: int = 360
     max_turns: int
-    enable_debater_search: bool = False
+    enable_debater_search: bool = True
     fun_mode: str = "persona_clash"
     debaters: List[DebaterConfig] = Field(default_factory=list)
+    substitute_debaters: List[DebaterConfig] = Field(default_factory=list)
     brief: str = ""
     research_references: List[SearchResult] = Field(default_factory=list)
     messages: List[DebateMessage] = Field(default_factory=list)

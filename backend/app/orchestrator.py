@@ -13,6 +13,7 @@ from app.execution.turn_executor import DebaterTurnExecutor
 from app.models import (
     DebaterConfig,
     DebateConfigureRequest,
+    DebateConfirmRequest,
     DebateMessage,
     DebateSession,
     DebateStage,
@@ -286,7 +287,6 @@ class DebateOrchestrator:
                     debater_names=[d.name for d in debaters],
                 )
                 session.debaters = debaters
-                session.deadline_at = utc_now() + timedelta(seconds=session.time_limit_sec)
                 self.session_store.update(session)
 
                 main_count = len(debaters)
@@ -326,6 +326,10 @@ class DebateOrchestrator:
                     )
                     substitutes = []
 
+                # Store substitutes in session for later use in confirm()
+                session.substitute_debaters = substitutes
+                self.session_store.update(session)
+
                 # Start avatar generation for substitutes too
                 sub_avatar_tasks = [
                     asyncio.create_task(self._generate_avatar_with_event(sub, session.session_id, session.debate_dir))
@@ -342,7 +346,7 @@ class DebateOrchestrator:
                         "topic": session.topic,
                         "time_limit_sec": session.time_limit_sec,
                         "max_turns": session.max_turns,
-                        "deadline_at": session.deadline_at.isoformat() if session.deadline_at else None,
+                        "deadline_at": None,  # deadline set when debate actually starts in confirm()
                     }),
                 )
 
@@ -359,12 +363,103 @@ class DebateOrchestrator:
                     data=with_trace_metadata({"session_id": session.session_id, "avatars": avatars}),
                 )
 
+                # Transition to drafting state — wait for user to confirm lineup
+                old_state = session.state
+                session.state = SessionState.drafting
+                self.session_store.update(session)
+                debate_logger.session_state_changed(
+                    session.session_id,
+                    old_state=old_state.value,
+                    new_state=SessionState.drafting.value,
+                    reason="Debaters ready, waiting for user to confirm lineup",
+                )
+
+                yield self._phase_event(
+                    session.session_id,
+                    "drafting",
+                    "Confirm lineup",
+                    "Review debaters and confirm lineup to start the debate.",
+                )
+
+            except Exception as exc:
+                old_state = session.state
+                session.state = SessionState.error
+                session.error = str(exc)
+                self.session_store.update(session)
+                debate_logger.session_state_changed(
+                    session.session_id,
+                    old_state=old_state.value,
+                    new_state=SessionState.error.value,
+                    reason=f"Error during configure: {str(exc)}",
+                )
+                debate_logger.exception(
+                    "Error in configure phase",
+                    event_type="phase_error",
+                    phase="configure",
+                    duration_sec=monotonic() - start_clock,
+                )
+                yield self._error_event(session.session_id, "configure", str(exc))
+
+    async def confirm(self, request: DebateConfirmRequest) -> AsyncGenerator[SSEEvent, None]:
+        """Start the debate after user confirms the debater lineup."""
+        start_clock = monotonic()
+        session = self.session_store.get(request.session_id)
+        if not session:
+            debate_logger.error(
+                "Session not found in confirm",
+                event_type="session_not_found",
+                session_id=request.session_id,
+            )
+            yield self._error_event(request.session_id, "confirm", "Session not found")
+            return
+
+        with debate_logger.session_context(session.session_id, session.trace_id):
+            if session.state != SessionState.drafting:
+                debate_logger.error(
+                    "Session not in drafting state",
+                    event_type="invalid_state",
+                    session_id=session.session_id,
+                    current_state=session.state.value,
+                )
+                yield self._error_event(session.session_id, "confirm", f"Session not in drafting state (current: {session.state.value})")
+                return
+
+            # Apply user's debater selection if provided
+            if request.debater_ids:
+                all_debaters = session.debaters + session.substitute_debaters
+                debater_map = {d.id: d for d in all_debaters}
+                new_lineup = [debater_map[did] for did in request.debater_ids if did in debater_map]
+                if new_lineup:
+                    session.debaters = new_lineup
+                    debate_logger.info(
+                        "Debater lineup updated by user",
+                        event_type="lineup_updated",
+                        debater_names=[d.name for d in new_lineup],
+                    )
+
+            # Set deadline now that debate is actually starting
+            session.deadline_at = utc_now() + timedelta(seconds=session.time_limit_sec)
+            session.state = SessionState.running
+            session.error = None
+            self.session_store.update(session)
+            debate_logger.session_state_changed(
+                session.session_id,
+                old_state=SessionState.drafting.value,
+                new_state=SessionState.running.value,
+                reason="User confirmed lineup, starting debate",
+            )
+
+            selected_focus = self._get_focus_option(
+                session, session.pre_debate_config.selected_focus_id
+            ) if session.pre_debate_config else None
+
+            try:
                 debater_agents = self._build_debater_agents(
-                    debaters,
+                    session.debaters,
                     debate_language=session.debate_language,
                 )
-                user_context = request.pre_debate_config.user_context
-                intensity = request.pre_debate_config.intensity
+                user_context = session.pre_debate_config.user_context if session.pre_debate_config else ""
+                intensity = session.pre_debate_config.intensity if session.pre_debate_config else "balanced"
 
                 # Execute debate stages using the stage pipeline
                 debate_logger.info(
@@ -422,15 +517,15 @@ class DebateOrchestrator:
                     session.session_id,
                     old_state=old_state.value,
                     new_state=SessionState.error.value,
-                    reason=f"Error during configure: {str(exc)}",
+                    reason=f"Error during confirm: {str(exc)}",
                 )
                 debate_logger.exception(
-                    "Error in configure phase",
+                    "Error in confirm phase",
                     event_type="phase_error",
-                    phase="configure",
+                    phase="confirm",
                     duration_sec=monotonic() - start_clock,
                 )
-                yield self._error_event(session.session_id, "configure", str(exc))
+                yield self._error_event(session.session_id, "confirm", str(exc))
 
     async def _execute_debate_stages(
         self,

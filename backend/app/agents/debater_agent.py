@@ -260,6 +260,9 @@ class DebaterAgent:
                 else:
                     raise ValueError("Empty streamed response")
         except Exception as exc:
+            from app.providers.llm_openai_compat import ContentFilterError
+            if isinstance(exc, ContentFilterError):
+                raise  # Do not fallback on content filter rejections
             debate_logger.warning(
                 "Debater stream fallback to non-stream chat",
                 event_type="debater_stream_fallback",

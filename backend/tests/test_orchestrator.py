@@ -12,11 +12,13 @@ from app.models import (
     DebaterConfig,
     DebateLanguage,
     DebateConfigureRequest,
+    DebateConfirmRequest,
     DebateSession,
     DebateStage,
     DebateStartRequest,
     FocusOption,
     PreDebateConfig,
+    SessionState,
     StructuredReport,
     utc_now,
 )
@@ -165,7 +167,7 @@ async def test_start_stops_after_focus_options_ready_without_debaters(monkeypatc
     async for event in orchestrator.start(
         DebateStartRequest(
             topic="Should I change jobs?",
-            debater_count=3,
+            debater_count=4,
             time_limit_sec=360,
             max_turns=24,
             debate_language=DebateLanguage.en,
@@ -250,6 +252,7 @@ async def test_configure_sets_deadline_persists_config_and_finishes_run(monkeypa
 
     session_id = start_events[0].data["session_id"]
 
+    # Phase 1: configure — creates debaters and stops at drafting state
     configure_events = []
     async for event in orchestrator.configure(
         DebateConfigureRequest(
@@ -265,7 +268,8 @@ async def test_configure_sets_deadline_persists_config_and_finishes_run(monkeypa
 
     session = orchestrator.session_store.get(session_id)
     assert session is not None
-    assert session.deadline_at is not None
+    assert session.state == SessionState.drafting
+    assert session.deadline_at is None  # deadline not set until confirm
     assert session.pre_debate_config is not None
     assert session.pre_debate_config.selected_focus_id == "focus-growth"
     assert create_debaters_calls == {
@@ -274,7 +278,20 @@ async def test_configure_sets_deadline_persists_config_and_finishes_run(monkeypa
         "user_context": "I already have one offer in hand.",
     }
     assert any(event.event == "debaters_ready" for event in configure_events)
-    assert configure_events[-1].event == "done"
+    assert any(event.event == "avatars_ready" for event in configure_events)
+    # configure should NOT produce a "done" event — that's confirm's job
+    assert all(event.event != "done" for event in configure_events)
+
+    # Phase 2: confirm — user confirms lineup, debate runs to completion
+    confirm_events = []
+    async for event in orchestrator.confirm(
+        DebateConfirmRequest(session_id=session_id)
+    ):
+        confirm_events.append(event)
+
+    session = orchestrator.session_store.get(session_id)
+    assert session.deadline_at is not None
+    assert confirm_events[-1].event == "done"
     assert session.report_path is not None
 
     # Report should be in the debate directory

@@ -11,6 +11,11 @@ from app.providers.base import LLMProvider
 from app.utils.logger import debate_logger
 
 
+class ContentFilterError(RuntimeError):
+    """Raised when the LLM provider rejects a request due to content safety filters."""
+    pass
+
+
 class OpenAICompatProvider(LLMProvider):
     def __init__(
         self,
@@ -63,7 +68,7 @@ class OpenAICompatProvider(LLMProvider):
             ],
             "stream": True,
         }
-        if "api.kimi.com/coding" in self.base_url:
+        if "api.kimi.com/coding" in self.base_url or "open.bigmodel.cn" in self.base_url:
             payload["max_tokens"] = settings.openai_max_output_tokens
 
         headers = {
@@ -79,7 +84,12 @@ class OpenAICompatProvider(LLMProvider):
                     response.raise_for_status()
                 except httpx.HTTPStatusError as exc:
                     detail = await response.aread()
-                    detail_text = detail.decode("utf-8", errors="ignore")
+                    detail_text = detail.decode("utf-8", errors="replace")
+                    if '"code":"1301"' in detail_text or "contentFilter" in detail_text:
+                        raise ContentFilterError(
+                            "LLM provider rejected the request due to content safety filters. "
+                            "Try rephrasing the topic to avoid sensitive content."
+                        ) from exc
                     raise RuntimeError(
                         f"LLM stream request failed with status {response.status_code}: {detail_text[:500]}"
                     ) from exc
@@ -130,7 +140,7 @@ class OpenAICompatProvider(LLMProvider):
                 {"role": "user", "content": user_prompt},
             ],
         }
-        if "api.kimi.com/coding" in self.base_url:
+        if "api.kimi.com/coding" in self.base_url or "open.bigmodel.cn" in self.base_url:
             payload["max_tokens"] = settings.openai_max_output_tokens
 
         headers = {
@@ -144,7 +154,7 @@ class OpenAICompatProvider(LLMProvider):
             try:
                 response.raise_for_status()
             except httpx.HTTPStatusError as exc:
-                detail = response.text.strip()
+                detail = response.content.decode("utf-8", errors="replace").strip()
                 if not detail:
                     detail = json.dumps(response.json(), ensure_ascii=False)
                 if "only available for Coding Agents" in detail:
@@ -156,6 +166,11 @@ class OpenAICompatProvider(LLMProvider):
                     raise RuntimeError(
                         "Moonshot API request was rejected because the account has insufficient balance or quota. "
                         "Recharge the Moonshot account or switch to another active API key."
+                    ) from exc
+                if '"code":"1301"' in detail or "contentFilter" in detail:
+                    raise ContentFilterError(
+                        "LLM provider rejected the request due to content safety filters. "
+                        "Try rephrasing the topic to avoid sensitive content."
                     ) from exc
                 raise RuntimeError(
                     f"LLM request failed with status {response.status_code} at {url}: {detail[:500]}"
@@ -216,7 +231,12 @@ class OpenAICompatProvider(LLMProvider):
                     response.raise_for_status()
                 except httpx.HTTPStatusError as exc:
                     detail = await response.aread()
-                    detail_text = detail.decode("utf-8", errors="ignore")
+                    detail_text = detail.decode("utf-8", errors="replace")
+                    if '"code":"1301"' in detail_text or "contentFilter" in detail_text:
+                        raise ContentFilterError(
+                            "LLM provider rejected the request due to content safety filters. "
+                            "Try rephrasing the topic to avoid sensitive content."
+                        ) from exc
                     raise RuntimeError(
                         f"LLM responses stream request failed with status {response.status_code}: {detail_text[:500]}"
                     ) from exc

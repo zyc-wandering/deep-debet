@@ -28,7 +28,9 @@
       "mcp__mcp-registry__search_mcp_registry",
       "Bash(Get-Content \"$env:USERPROFILE\\\\.claude\\\\claude_desktop_config.json\")",
       "Bash(cmd /c \"type %USERPROFILE%\\\\.claude\\\\claude_desktop_config.json\")",
-      "Bash(cmd /c \"dir %USERPROFILE%\\\\.claude\"\")"
+      "Bash(cmd /c \"dir %USERPROFILE%\\\\.claude\"\")",
+      "WebFetch(domain:docs.perplexity.ai)",
+      "Bash(.venv/Scripts/python.exe -m pytest tests/ -x -q)"
     ]
   }
 }

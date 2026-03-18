@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 from pathlib import Path
 
@@ -11,6 +13,7 @@ from app.config import ensure_directories, settings
 from app.execution.turn_executor import DebaterTurnExecutor
 from app.models import (
     DebateConfigureRequest,
+    DebateConfirmRequest,
     DebateModelVariant,
     DebateStartRequest,
     DebateStopRequest,
@@ -29,6 +32,7 @@ from app.stage import (
     StageRegistry,
 )
 from app.storage.report_writer import ReportWriter
+from app.storage.database import db
 from app.storage.session_store import SessionStore
 from app.storage.trace_store import TraceStore
 from app.utils.formatting import sse_event
@@ -36,7 +40,15 @@ from app.utils.logger import debate_logger
 
 ensure_directories()
 
-app = FastAPI(title=settings.app_name)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    db.init()
+    session_store.load_all()
+    yield
+
+
+app = FastAPI(title=settings.app_name, lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.frontend_origin, "http://localhost:5173", "http://127.0.0.1:5173"],
@@ -46,7 +58,13 @@ app.add_middleware(
 )
 
 # Global singleton dependencies
-search_provider = TavilySearchProvider()
+def _make_search_provider() -> SearchProvider:
+    if settings.search_provider == "perplexity":
+        from app.providers.search_perplexity import PerplexitySearchProvider
+        return PerplexitySearchProvider()
+    return TavilySearchProvider()
+
+search_provider = _make_search_provider()
 session_store = SessionStore()
 report_writer = ReportWriter()
 trace_store = TraceStore()
@@ -58,15 +76,17 @@ def _make_llm_provider(model_variant: DebateModelVariant = DebateModelVariant.li
     """Factory function to create LLM provider based on model variant."""
     if model_variant == DebateModelVariant.pro:
         return OpenAICompatProvider(
+            base_url=settings.openai_base_url_pro,
+            api_key=settings.openai_api_key_pro,
             model=settings.openai_model_pro,
-            api_style="responses",
-            response_tools=[{"type": "web_search", "max_keyword": 3}],
         )
 
     return OpenAICompatProvider(model=settings.openai_model)
 
 
-llm_provider = _make_llm_provider()
+llm_provider = _make_llm_provider(
+    DebateModelVariant.pro if settings.openai_api_key_pro else DebateModelVariant.lite
+)
 
 
 # Dependency providers for FastAPI injection
@@ -262,6 +282,40 @@ async def configure_debate(request: DebateConfigureRequest) -> StreamingResponse
     return StreamingResponse(event_stream(), media_type="text/event-stream", headers=headers)
 
 
+@app.post("/api/debate/confirm")
+async def confirm_debate(request: DebateConfirmRequest) -> StreamingResponse:
+    """Confirm debater lineup and start the debate.
+
+    Called after the user reviews the debater drafting page and confirms.
+    """
+    session = session_store.get(request.session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    # Create orchestrator with model variant from session
+    orchestrator = create_orchestrator(
+        model_variant=session.model_variant,
+        search=search_provider,
+        store=session_store,
+        writer=report_writer,
+        images=image_service,
+        registry=get_stage_registry(turn_executor),
+        turn_exec=turn_executor,
+    )
+
+    async def event_stream() -> AsyncGenerator[str, None]:
+        async for evt in orchestrator.confirm(request):
+            yield _serialize_traced_event(evt, session_store)
+        yield ": stream-end\n\n"
+
+    headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+    }
+    return StreamingResponse(event_stream(), media_type="text/event-stream", headers=headers)
+
+
 @app.post("/api/debate/stop")
 async def stop_debate(
     request: DebateStopRequest,
@@ -348,6 +402,49 @@ async def follow_up(request: FollowUpRequest) -> StreamingResponse:
         "X-Accel-Buffering": "no",
     }
     return StreamingResponse(event_stream(), media_type="text/event-stream", headers=headers)
+
+
+@app.get("/api/sessions")
+async def list_sessions(
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    state: str | None = Query(None),
+    store: SessionStore = Depends(get_session_store),
+) -> dict:
+    """List all debate sessions with pagination."""
+    sessions, total = store.list_sessions(limit=limit, offset=offset, state=state)
+    return {"sessions": sessions, "total": total}
+
+
+@app.get("/api/sessions/{session_id}")
+async def get_session(
+    session_id: str,
+    store: SessionStore = Depends(get_session_store),
+) -> dict:
+    """Get full session data including messages, report and follow-ups."""
+    data = store.get_session_full(session_id)
+    if not data:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return data
+
+
+@app.delete("/api/sessions/{session_id}")
+async def delete_session(
+    session_id: str,
+    store: SessionStore = Depends(get_session_store),
+) -> dict:
+    """Delete a session and its associated files."""
+    data = store.get_session_full(session_id)
+    if not data:
+        raise HTTPException(status_code=404, detail="Session not found")
+    debate_dir = data.get("debate_dir")
+    if debate_dir:
+        import shutil
+        path = Path(debate_dir)
+        if path.exists() and path.is_dir():
+            shutil.rmtree(path, ignore_errors=True)
+    store.delete_session(session_id)
+    return {"deleted": session_id}
 
 
 @app.get("/api/health")

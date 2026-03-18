@@ -43,6 +43,42 @@ function parseConclusion(raw: unknown): {
   return { text: String(raw) };
 }
 
+function renderPoint(pt: unknown): string {
+  if (typeof pt === "string") return pt;
+  if (typeof pt === "object" && pt !== null) {
+    const obj = pt as Record<string, unknown>;
+    if (obj.point) return String(obj.point);
+    if (obj.text) return String(obj.text);
+    if (obj.content) return String(obj.content);
+    return JSON.stringify(pt);
+  }
+  return String(pt);
+}
+
+function renderPosition(pos: unknown): string {
+  if (typeof pos === "string") return pos;
+  if (typeof pos === "object" && pos !== null) {
+    const obj = pos as Record<string, unknown>;
+    if (obj.argument) return String(obj.argument);
+    if (obj.point) return String(obj.point);
+    if (obj.text) return String(obj.text);
+    if (obj.content) return String(obj.content);
+    return JSON.stringify(pos);
+  }
+  return String(pos);
+}
+
+function renderTopic(topic: unknown): string {
+  if (typeof topic === "string") return topic;
+  if (typeof topic === "object" && topic !== null) {
+    const obj = topic as Record<string, unknown>;
+    if (obj.text) return String(obj.text);
+    if (obj.name) return String(obj.name);
+    return JSON.stringify(topic);
+  }
+  return String(topic);
+}
+
 export default function SummaryPhase() {
   const topic = useDebateStore((s) => s.topic);
   const hostSummary = useDebateStore((s) => s.hostSummary);
@@ -282,7 +318,7 @@ export default function SummaryPhase() {
                           <ul className="text-slate-700 text-sm space-y-1">
                             {arg.key_points.map((pt, i) => (
                               <li key={i} className="italic">
-                                &ldquo;{pt}&rdquo;
+                                &ldquo;{renderPoint(pt)}&rdquo;
                               </li>
                             ))}
                           </ul>
@@ -305,12 +341,12 @@ export default function SummaryPhase() {
                   <div className="space-y-4">
                     {structuredReport.clash_points.map((cp, idx) => (
                       <div key={idx} className="p-4 bg-slate-50 rounded-lg border border-slate-200">
-                        <h4 className="font-bold text-sm text-primary mb-2">{cp.topic}</h4>
+                        <h4 className="font-bold text-sm text-primary mb-2">{renderTopic(cp.topic)}</h4>
                         <div className="space-y-1">
                           {Object.entries(cp.positions).map(([debater, pos]) => (
                             <p key={debater} className="text-sm text-slate-600">
                               <span className="font-semibold text-slate-800">{debater}：</span>
-                              {pos}
+                              {renderPosition(pos)}
                             </p>
                           ))}
                         </div>

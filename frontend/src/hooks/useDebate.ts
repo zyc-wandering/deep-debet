@@ -2,6 +2,7 @@ import { EventSourceMessage, fetchEventSource } from "@microsoft/fetch-event-sou
 import { useCallback, useMemo, useRef } from "react";
 import {
   DebateConfigureRequest,
+  DebateConfirmRequest,
   DebatePhase,
   DebateStartRequest,
   DebaterConfig,
@@ -77,10 +78,11 @@ export function useDebate() {
         };
 
         const hasConfigureEndpoint = Boolean(schema.paths?.["/api/debate/configure"]);
+        const hasConfirmEndpoint = Boolean(schema.paths?.["/api/debate/confirm"]);
         const startProps = schema.components?.schemas?.DebateStartRequest?.properties || {};
         const stillUsesLegacyStartConfig = "pre_debate_config" in startProps;
 
-        if (hasConfigureEndpoint && !stillUsesLegacyStartConfig) {
+        if (hasConfigureEndpoint && hasConfirmEndpoint && !stillUsesLegacyStartConfig) {
           apiBaseRef.current = base;
           phase3SupportRef.current = true;
           return;
@@ -266,14 +268,23 @@ export function useDebate() {
             }
           },
           onmessage: handleMessage,
+          onclose: () => {
+            return;
+          },
           onerror: (error) => {
-            if (ctrl.signal.aborted) return;
-            const errorMsg = error.message || "Connection error";
-            useDebateStore.getState().setError(errorMsg);
+            if (!ctrl.signal.aborted) {
+              const errorMsg = error.message || "Connection error";
+              useDebateStore.getState().setError(errorMsg);
+            }
+            // Always throw to prevent fetchEventSource from auto-retrying.
+            // Our SSE streams are one-shot (start, configure, confirm) — never reconnect.
+            throw error;
           },
         });
       } catch (error) {
         if (ctrl.signal.aborted) return;
+        // "SSE stream closed" is our intentional close — not a real error
+        if (error instanceof Error && error.message === "SSE stream closed") return;
         const message = error instanceof Error ? error.message : "Connection error";
         useDebateStore.getState().setError(message);
       }
@@ -297,6 +308,9 @@ export function useDebate() {
       },
       configure: async (payload: DebateConfigureRequest) => {
         await runStream(`${apiBaseRef.current}/api/debate/configure`, JSON.stringify(payload));
+      },
+      confirm: async (payload: DebateConfirmRequest) => {
+        await runStream(`${apiBaseRef.current}/api/debate/confirm`, JSON.stringify(payload));
       },
       stop: async () => {
         const store = useDebateStore.getState();

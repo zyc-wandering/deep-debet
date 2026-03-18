@@ -439,6 +439,8 @@ class HostAgent:
                 await asyncio.sleep(0.005)
 
     async def _chat_required_text(self, user_prompt: str, *, max_retries: int = 2) -> str:
+        from app.providers.llm_openai_compat import ContentFilterError
+
         last_exc: Exception | None = None
         for attempt in range(max_retries + 1):
             try:
@@ -451,6 +453,8 @@ class HostAgent:
                     event_type="llm_empty_response_retry",
                     attempt=attempt + 1,
                 )
+            except ContentFilterError:
+                raise  # Do not retry content filter rejections
             except Exception as exc:
                 last_exc = exc
                 debate_logger.warning(
@@ -484,67 +488,44 @@ class HostAgent:
             raise ValueError(f"LLM output still missing required tokens: {required_tokens}")
         return repaired
 
-    async def _chat_json_array(self, user_prompt: str, schema_description: str) -> List[dict]:
+    async def _chat_json_with_retry(
+        self,
+        user_prompt: str,
+        schema_description: str,
+        expect_array: bool,
+    ) -> Any:
         raw = await self._chat_required_text(user_prompt)
         try:
-            return self._extract_json_array(raw)
+            return self._extract_json(raw, expect_array=expect_array)
         except Exception:
-            repaired = await self._chat_required_text(
-                build_json_array_repair_prompt(
+            if expect_array:
+                repair_prompt = build_json_array_repair_prompt(
                     schema_description=schema_description,
                     raw_output=raw,
                     language=self.debate_language,
                 )
-            )
-            return self._extract_json_array(repaired)
+            else:
+                repair_prompt = build_json_object_repair_prompt(
+                    schema_description=schema_description,
+                    raw_output=raw,
+                    language=self.debate_language,
+                )
+            repaired = await self._chat_required_text(repair_prompt)
+            return self._extract_json(repaired, expect_array=expect_array)
+
+    async def _chat_json_array(self, user_prompt: str, schema_description: str) -> List[dict]:
+        return await self._chat_json_with_retry(
+            user_prompt=user_prompt,
+            schema_description=schema_description,
+            expect_array=True,
+        )
 
     async def _chat_json_object(self, user_prompt: str, schema_description: str) -> Dict[str, Any]:
-        raw = await self._chat_required_text(user_prompt)
-        try:
-            return self._extract_json_object(raw)
-        except Exception:
-            repaired = await self._chat_required_text(
-                build_json_object_repair_prompt(
-                    schema_description=schema_description,
-                    raw_output=raw,
-                    language=self.debate_language,
-                )
-            )
-            return self._extract_json_object(repaired)
-
-    def _extract_json_array(self, raw: str) -> List[dict]:
-        text = raw.strip()
-        if "```" in text:
-            parts = text.split("```")
-            body = parts[1] if len(parts) > 1 else text
-            if body.strip().startswith("json"):
-                body = body.strip()[4:]
-            text = body.strip()
-        start = text.find("[")
-        end = text.rfind("]")
-        if start >= 0 and end > start:
-            text = text[start : end + 1]
-        parsed = json.loads(text)
-        if not isinstance(parsed, list):
-            raise ValueError("Expected JSON array")
-        return parsed
-
-    def _extract_json_object(self, raw: str) -> Dict[str, Any]:
-        text = raw.strip()
-        if "```" in text:
-            parts = text.split("```")
-            body = parts[1] if len(parts) > 1 else text
-            if body.strip().startswith("json"):
-                body = body.strip()[4:]
-            text = body.strip()
-        start = text.find("{")
-        end = text.rfind("}")
-        if start >= 0 and end > start:
-            text = text[start : end + 1]
-        parsed = json.loads(text)
-        if not isinstance(parsed, dict):
-            raise ValueError("Expected JSON object")
-        return parsed
+        return await self._chat_json_with_retry(
+            user_prompt=user_prompt,
+            schema_description=schema_description,
+            expect_array=False,
+        )
 
     def _normalize_structured_report_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
         normalized = dict(data)
@@ -586,3 +567,42 @@ class HostAgent:
 
     def _contains_all_tokens(self, text: str, tokens: List[str]) -> bool:
         return all(token in text for token in tokens)
+
+    def _extract_json_from_markdown(self, raw: str) -> str:
+        text = raw.strip()
+        if "```" in text:
+            parts = text.split("```")
+            body = parts[1] if len(parts) > 1 else text
+            if body.strip().startswith("json"):
+                body = body.strip()[4:]
+            text = body.strip()
+        return text
+
+    def _extract_json(self, raw: str, expect_array: bool = False) -> Any:
+        text = self._extract_json_from_markdown(raw)
+
+        if expect_array:
+            start = text.find("[")
+            end = text.rfind("]")
+            expected_type = list
+            type_name = "array"
+        else:
+            start = text.find("{")
+            end = text.rfind("}")
+            expected_type = dict
+            type_name = "object"
+
+        if start >= 0 and end > start:
+            text = text[start : end + 1]
+
+        parsed = json.loads(text)
+        if not isinstance(parsed, expected_type):
+            raise ValueError(f"Expected JSON {type_name}")
+
+        return parsed
+
+    def _extract_json_array(self, raw: str) -> List[dict]:
+        return self._extract_json(raw, expect_array=True)
+
+    def _extract_json_object(self, raw: str) -> Dict[str, Any]:
+        return self._extract_json(raw, expect_array=False)
