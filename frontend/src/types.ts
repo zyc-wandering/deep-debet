@@ -66,6 +66,13 @@ export interface ArgumentNode {
   focal_point?: string;
 }
 
+export interface HostConclusion {
+  winning_argument?: string;
+  strongest_debater?: string;
+  reasoning?: string;
+  reasoning_list?: string[];
+}
+
 export interface StructuredReport {
   background_summary: string;
   core_arguments: Array<{
@@ -78,7 +85,7 @@ export interface StructuredReport {
     positions: Record<string, unknown>;
   }>;
   synthesis: string;
-  host_conclusion: string;
+  host_conclusion: string | HostConclusion;
   argument_nodes: ArgumentNode[];
 }
 

@@ -4,7 +4,14 @@ from time import monotonic
 from typing import AsyncGenerator, List, Optional
 
 from app.agents.debater_agent import DebaterAgent
-from app.models import DebateMessage, DebateSession, DebateStage, FocusOption, SearchResult, SSEEvent
+from app.models import (
+    DebateMessage,
+    DebateSession,
+    DebateStage,
+    FocusOption,
+    SearchResult,
+    SSEEvent,
+)
 from app.utils.formatting import with_trace_metadata
 from app.utils.logger import debate_logger
 
@@ -30,7 +37,9 @@ class DebaterTurnExecutor:
         content_parts: list[str] = []
         citations = citations or []
 
-        with debate_logger.span_context(f"turn:{stage.value}:{agent.config.name}:{turn_id}"):
+        with debate_logger.span_context(
+            f"turn:{stage.value}:{agent.config.name}:{turn_id}"
+        ):
             debate_logger.turn_start(
                 speaker=agent.config.name,
                 turn_id=turn_id,
@@ -52,6 +61,8 @@ class DebaterTurnExecutor:
                 )
 
             token_count = 0
+            stop_check_counter = 0
+            interrupted = False
             try:
                 async for token in agent.produce_turn_stream_stage(
                     topic=topic,
@@ -63,6 +74,19 @@ class DebaterTurnExecutor:
                     selected_focus=selected_focus,
                     user_context=user_context,
                 ):
+                    # Cooperative cancellation: check stop_requested periodically
+                    stop_check_counter += 1
+                    if stop_check_counter % 20 == 0 and session.stop_requested:
+                        debate_logger.info(
+                            "Turn interrupted by stop request",
+                            event_type="turn_interrupted",
+                            speaker=agent.config.name,
+                            turn_id=turn_id,
+                            tokens_received=token_count,
+                        )
+                        interrupted = True
+                        break
+
                     content_parts.append(token)
                     token_count += 1
                     if token_count % 50 == 0:
@@ -102,7 +126,12 @@ class DebaterTurnExecutor:
                 duration_sec=duration,
                 token_count=token_count,
                 content_length=len(content),
+                extra={"interrupted": interrupted} if interrupted else None,
             )
+
+        # Skip saving message if turn was interrupted (partial content)
+        if interrupted:
+            return
 
         message = DebateMessage(
             speaker=agent.config.name,
@@ -123,7 +152,9 @@ class DebaterTurnExecutor:
                     "speaker": agent.config.name,
                     "turn_id": turn_id,
                     "full_content": content,
-                    "citations": [citation.model_dump() for citation in citations] if citations else [],
+                    "citations": [citation.model_dump() for citation in citations]
+                    if citations
+                    else [],
                     "stage": stage.value,
                 }
             ),
