@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import {
   Download,
+  FileText,
   Share2,
   BrainCircuit,
   Gavel,
@@ -16,67 +17,107 @@ import remarkGfm from "remark-gfm";
 import { useDebateStore } from "../store/debateStore";
 import { useFollowUp } from "../hooks/useFollowUp";
 import Avatar from "./Avatar";
+import { generateTranscriptMarkdown } from "../utils/generateTranscriptMarkdown";
 
 /**
- * Parse host_conclusion which can be either a string or an object like:
- * { winning_argument, strongest_debater, reasoning, reasoning_list }
+ * Safely extract a readable string from an unknown value.
+ * Walks known field names to avoid rendering [object Object].
  */
-function parseConclusion(raw: unknown): {
+function extractText(val: unknown, keys: string[] = ["text", "point", "content", "argument", "name"]): string {
+  if (val == null) return "";
+  if (typeof val === "string") return val;
+  if (typeof val === "number" || typeof val === "boolean") return String(val);
+  if (Array.isArray(val)) return val.map((v) => extractText(v, keys)).join("; ");
+  if (typeof val === "object") {
+    const obj = val as Record<string, unknown>;
+    for (const k of keys) {
+      if (obj[k] && typeof obj[k] === "string") return obj[k] as string;
+    }
+    // Last resort: join all string values
+    const parts = Object.values(obj)
+      .filter((v) => typeof v === "string" && v.length > 0)
+      .map(String);
+    if (parts.length > 0) return parts.join(" — ");
+  }
+  return "";
+}
+
+interface ParsedConclusion {
   winning_argument?: string;
   strongest_debater?: string;
   reasoning?: string;
   reasoning_list?: string[];
   text?: string;
-} {
+}
+
+function parseObjectConclusion(obj: Record<string, unknown>): ParsedConclusion {
+  return {
+    winning_argument: typeof obj.winning_argument === "string" ? obj.winning_argument : undefined,
+    strongest_debater: typeof obj.strongest_debater === "string" ? obj.strongest_debater : undefined,
+    reasoning: typeof obj.reasoning === "string" ? obj.reasoning : undefined,
+    reasoning_list: Array.isArray(obj.reasoning_list)
+      ? obj.reasoning_list.map((r) => extractText(r))
+      : undefined,
+  };
+}
+
+/**
+ * Strip markdown code fences from a string.
+ * Handles ```json\n...\n``` and ```\n...\n``` patterns.
+ */
+function stripCodeFences(s: string): string {
+  let cleaned = s.trim();
+  if (cleaned.startsWith("```")) {
+    // Remove opening fence line (```json, ```typescript, or plain ```)
+    const firstNewline = cleaned.indexOf("\n");
+    cleaned = firstNewline >= 0 ? cleaned.slice(firstNewline + 1) : cleaned.slice(3);
+  }
+  if (cleaned.endsWith("```")) {
+    cleaned = cleaned.slice(0, -3).trimEnd();
+  }
+  return cleaned;
+}
+
+/**
+ * Try to parse a string as JSON, stripping code fences if needed.
+ */
+function tryParseJson(s: string): Record<string, unknown> | null {
+  // Try raw first
+  for (const candidate of [s.trim(), stripCodeFences(s)]) {
+    try {
+      const parsed = JSON.parse(candidate);
+      if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+        return parsed;
+      }
+    } catch { /* continue */ }
+  }
+  return null;
+}
+
+/**
+ * Parse host_conclusion which can be:
+ * - a plain markdown string
+ * - a JSON-stringified object (possibly wrapped in markdown code fences)
+ * - or a proper JS object { winning_argument, strongest_debater, reasoning, reasoning_list }
+ */
+function parseConclusion(raw: unknown): ParsedConclusion {
   if (!raw) return {};
-  if (typeof raw === "string") return { text: raw };
-  if (typeof raw === "object") {
-    const obj = raw as Record<string, unknown>;
-    return {
-      winning_argument: obj.winning_argument as string | undefined,
-      strongest_debater: obj.strongest_debater as string | undefined,
-      reasoning: obj.reasoning as string | undefined,
-      reasoning_list: Array.isArray(obj.reasoning_list) ? obj.reasoning_list : undefined,
-      text: undefined,
-    };
+
+  // String: could be markdown, JSON, or JSON wrapped in code fences
+  if (typeof raw === "string") {
+    const parsed = tryParseJson(raw);
+    if (parsed && ("winning_argument" in parsed || "strongest_debater" in parsed)) {
+      return parseObjectConclusion(parsed);
+    }
+    return { text: raw.trim() };
   }
+
+  // Object: extract known fields
+  if (typeof raw === "object" && raw !== null) {
+    return parseObjectConclusion(raw as Record<string, unknown>);
+  }
+
   return { text: String(raw) };
-}
-
-function renderPoint(pt: unknown): string {
-  if (typeof pt === "string") return pt;
-  if (typeof pt === "object" && pt !== null) {
-    const obj = pt as Record<string, unknown>;
-    if (obj.point) return String(obj.point);
-    if (obj.text) return String(obj.text);
-    if (obj.content) return String(obj.content);
-    return JSON.stringify(pt);
-  }
-  return String(pt);
-}
-
-function renderPosition(pos: unknown): string {
-  if (typeof pos === "string") return pos;
-  if (typeof pos === "object" && pos !== null) {
-    const obj = pos as Record<string, unknown>;
-    if (obj.argument) return String(obj.argument);
-    if (obj.point) return String(obj.point);
-    if (obj.text) return String(obj.text);
-    if (obj.content) return String(obj.content);
-    return JSON.stringify(pos);
-  }
-  return String(pos);
-}
-
-function renderTopic(topic: unknown): string {
-  if (typeof topic === "string") return topic;
-  if (typeof topic === "object" && topic !== null) {
-    const obj = topic as Record<string, unknown>;
-    if (obj.text) return String(obj.text);
-    if (obj.name) return String(obj.name);
-    return JSON.stringify(topic);
-  }
-  return String(topic);
 }
 
 export default function SummaryPhase() {
@@ -88,6 +129,7 @@ export default function SummaryPhase() {
   const substituteDebaters = useDebateStore((s) => s.substituteDebaters);
   const allDebaters = [...debaters, ...substituteDebaters];
   const transcript = useDebateStore((s) => s.transcript);
+  const stageLines = useDebateStore((s) => s.stageLines);
   const sessionId = useDebateStore((s) => s.sessionId);
   const followUpMessages = useDebateStore((s) => s.followUpMessages);
   const isFollowUpStreaming = useDebateStore((s) => s.isFollowUpStreaming);
@@ -119,6 +161,24 @@ export default function SummaryPhase() {
     URL.revokeObjectURL(url);
   };
 
+  const handleDownloadTranscript = () => {
+    if (transcript.length === 0) return;
+    const md = generateTranscriptMarkdown({
+      topic,
+      debaters,
+      stageLines,
+      transcript,
+      isZh,
+    });
+    const blob = new Blob([md], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `debate-transcript-${Date.now()}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const handleChat = () => {
     if (!chatInput.trim() || isFollowUpStreaming || !sessionId) return;
     submitFollowUp({
@@ -138,12 +198,20 @@ export default function SummaryPhase() {
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
-      className="flex flex-col gap-8 max-w-5xl mx-auto pb-10"
+      className="flex flex-col gap-6 max-w-5xl mx-auto pb-10"
     >
       {/* Header bar */}
       <div className="flex flex-wrap justify-between items-center bg-white p-4 rounded-xl shadow-sm border border-primary/10 gap-3">
         <h2 className="text-xl font-bold">{isZh ? "辩论分析" : "Debate Intelligence"}</h2>
         <div className="flex gap-3">
+          <button
+            onClick={handleDownloadTranscript}
+            disabled={transcript.length === 0}
+            className="flex items-center gap-2 bg-primary/10 text-primary px-4 py-2 rounded-lg text-sm font-bold hover:bg-primary/20 transition-colors disabled:opacity-50 cursor-pointer"
+          >
+            <FileText className="w-4 h-4" />
+            {isZh ? "下载辩论记录" : "Download Transcript"}
+          </button>
           <button
             onClick={handleDownload}
             disabled={!reportMarkdown && !hostSummary}
@@ -181,14 +249,14 @@ export default function SummaryPhase() {
       </div>
 
       {/* Content grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Main content */}
         <div className="lg:col-span-2 flex flex-col gap-6">
 
           {/* ── Verdict Card (from structuredReport.host_conclusion) ── */}
-          {conclusion && (conclusion.winning_argument || conclusion.text) && (
-            <section className="bg-gradient-to-br from-slate-900 to-slate-800 text-white p-6 rounded-xl shadow-lg">
-              <div className="flex items-center gap-3 mb-4">
+          {conclusion && (conclusion.winning_argument || conclusion.strongest_debater || conclusion.reasoning || conclusion.reasoning_list?.length || conclusion.text) && (
+            <section className="bg-gradient-to-br from-[#221810] to-[#1a1209] text-white rounded-xl shadow-lg border border-primary/20 overflow-hidden">
+              <div className="flex items-center gap-3 px-6 pt-6 pb-4">
                 <Trophy className="text-amber-400 w-6 h-6" />
                 <h2 className="text-xl font-bold">
                   {isZh ? "裁决结果" : "Final Verdict"}
@@ -196,51 +264,70 @@ export default function SummaryPhase() {
               </div>
 
               {conclusion.text ? (
-                <div className="text-slate-200 leading-relaxed">
+                <div className="px-6 pb-6 text-slate-200 leading-relaxed prose prose-invert max-w-none prose-p:text-slate-200 prose-strong:text-white">
                   <Markdown remarkPlugins={[remarkGfm]}>{conclusion.text}</Markdown>
                 </div>
               ) : (
-                <div className="space-y-4">
-                  {conclusion.winning_argument && (
-                    <div className="flex items-start gap-3">
-                      <Swords className="text-primary w-5 h-5 mt-0.5 shrink-0" />
-                      <div>
-                        <p className="text-xs text-slate-400 uppercase font-bold mb-1">
-                          {isZh ? "胜出论点" : "Winning Argument"}
-                        </p>
-                        <p className="text-slate-100 font-medium">
-                          {conclusion.winning_argument}
-                        </p>
-                      </div>
+                <div className="flex flex-col">
+                  {/* Winning argument + strongest debater: hero row */}
+                  {(conclusion.winning_argument || conclusion.strongest_debater) && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-px bg-white/5">
+                      {conclusion.winning_argument && (
+                        <div className="bg-[#1a1209] p-5 flex flex-col gap-2">
+                          <div className="flex items-center gap-2">
+                            <Swords className="text-primary w-4 h-4 shrink-0" />
+                            <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">
+                              {isZh ? "胜出论点" : "Winning Argument"}
+                            </span>
+                          </div>
+                          <p className="text-slate-100 font-medium text-sm leading-relaxed">
+                            {conclusion.winning_argument}
+                          </p>
+                        </div>
+                      )}
+                      {conclusion.strongest_debater && (
+                        <div className="bg-[#1a1209] p-5 flex flex-col gap-2">
+                          <div className="flex items-center gap-2">
+                            <Trophy className="text-amber-400 w-4 h-4 shrink-0" />
+                            <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">
+                              {isZh ? "最强辩手" : "Strongest Debater"}
+                            </span>
+                          </div>
+                          <p className="text-amber-300 font-bold text-lg">
+                            {conclusion.strongest_debater}
+                          </p>
+                        </div>
+                      )}
                     </div>
                   )}
-                  {conclusion.strongest_debater && (
-                    <div className="flex items-start gap-3">
-                      <Trophy className="text-amber-400 w-5 h-5 mt-0.5 shrink-0" />
-                      <div>
-                        <p className="text-xs text-slate-400 uppercase font-bold mb-1">
-                          {isZh ? "最强辩手" : "Strongest Debater"}
-                        </p>
-                        <p className="text-amber-300 font-bold text-lg">
-                          {conclusion.strongest_debater}
-                        </p>
-                      </div>
-                    </div>
-                  )}
+
+                  {/* Reasoning summary */}
                   {conclusion.reasoning && (
-                    <div className="mt-2 p-3 bg-white/5 rounded-lg border border-white/10">
-                      <p className="text-sm text-slate-300">{conclusion.reasoning}</p>
+                    <div className="mx-6 mt-4 p-4 bg-white/5 rounded-lg border border-white/10">
+                      <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-1.5">
+                        {isZh ? "裁决依据" : "Verdict Basis"}
+                      </p>
+                      <p className="text-sm text-slate-300 leading-relaxed">{conclusion.reasoning}</p>
                     </div>
                   )}
+
+                  {/* Reasoning list */}
                   {conclusion.reasoning_list && conclusion.reasoning_list.length > 0 && (
-                    <ul className="space-y-2 mt-2">
-                      {conclusion.reasoning_list.map((r, i) => (
-                        <li key={i} className="flex items-start gap-2 text-sm text-slate-300">
-                          <CheckCircle2 className="text-emerald-400 w-4 h-4 mt-0.5 shrink-0" />
-                          <span>{r}</span>
-                        </li>
-                      ))}
-                    </ul>
+                    <div className="px-6 py-4">
+                      <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-3">
+                        {isZh ? "胜出理由" : "Reasons for Victory"}
+                      </p>
+                      <ul className="space-y-2.5">
+                        {conclusion.reasoning_list.map((r, i) => (
+                          <li key={i} className="flex items-start gap-3 text-sm text-slate-300">
+                            <span className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">
+                              {i + 1}
+                            </span>
+                            <span className="leading-relaxed">{r}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
                   )}
                 </div>
               )}
@@ -316,11 +403,14 @@ export default function SummaryPhase() {
                             {arg.speaker} — {arg.stance}
                           </p>
                           <ul className="text-slate-700 text-sm space-y-1">
-                            {arg.key_points.map((pt, i) => (
-                              <li key={i} className="italic">
-                                &ldquo;{renderPoint(pt)}&rdquo;
-                              </li>
-                            ))}
+                            {arg.key_points.map((pt, i) => {
+                              const text = extractText(pt, ["point", "text", "content", "argument"]);
+                              return text ? (
+                                <li key={i} className="italic">
+                                  &ldquo;{text}&rdquo;
+                                </li>
+                              ) : null;
+                            })}
                           </ul>
                         </div>
                       </li>
@@ -340,14 +430,16 @@ export default function SummaryPhase() {
                   </div>
                   <div className="space-y-4">
                     {structuredReport.clash_points.map((cp, idx) => (
-                      <div key={idx} className="p-4 bg-slate-50 rounded-lg border border-slate-200">
-                        <h4 className="font-bold text-sm text-primary mb-2">{renderTopic(cp.topic)}</h4>
-                        <div className="space-y-1">
+                      <div key={idx} className="p-4 bg-amber-50/50 rounded-lg border border-amber-200/50">
+                        <h4 className="font-bold text-sm text-primary mb-2">
+                          {extractText(cp.topic, ["text", "name", "topic", "title"])}
+                        </h4>
+                        <div className="space-y-2">
                           {Object.entries(cp.positions).map(([debater, pos]) => (
-                            <p key={debater} className="text-sm text-slate-600">
+                            <div key={debater} className="text-sm text-slate-600">
                               <span className="font-semibold text-slate-800">{debater}：</span>
-                              {renderPosition(pos)}
-                            </p>
+                              {extractText(pos, ["argument", "point", "text", "content", "position"])}
+                            </div>
                           ))}
                         </div>
                       </div>
@@ -414,7 +506,7 @@ export default function SummaryPhase() {
                           <span className="text-[10px] text-slate-400 mb-1 uppercase font-bold">
                             {msg.target_role}
                           </span>
-                          <div className="p-3 rounded-xl max-w-[80%] bg-white border border-slate-200 text-slate-700 text-sm">
+                          <div className="p-3 rounded-xl max-w-[80%] bg-bg border border-primary/10 text-slate-700 text-sm">
                             {msg.response ? (
                               <Markdown remarkPlugins={[remarkGfm]}>{msg.response}</Markdown>
                             ) : (
@@ -442,7 +534,7 @@ export default function SummaryPhase() {
                     handleChat();
                   }
                 }}
-                className="min-h-[100px] w-full p-4 rounded-lg bg-bg border border-primary/10 text-slate-700 focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none"
+                className="min-h-[80px] w-full p-4 rounded-lg bg-bg border border-primary/10 text-slate-700 focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none transition-shadow"
                 placeholder={
                   isZh
                     ? `向${chatTarget === "host" ? "主持人" : chatTarget}提问...`
@@ -493,24 +585,24 @@ export default function SummaryPhase() {
           </aside>
 
           {/* Debate metrics */}
-          <div className="bg-primary p-6 rounded-xl text-white shadow-lg shadow-primary/20">
-            <h4 className="font-bold mb-4 flex items-center gap-2">
-              <BrainCircuit className="w-5 h-5" />
+          <div className="bg-white p-6 rounded-xl border border-primary/10 shadow-sm">
+            <h4 className="font-bold mb-4 flex items-center gap-2 text-slate-900">
+              <BrainCircuit className="w-5 h-5 text-primary" />
               {isZh ? "辩论数据" : "Debate Metrics"}
             </h4>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="bg-white/10 p-3 rounded">
-                <p className="text-xs opacity-75">{isZh ? "发言轮次" : "Turns"}</p>
-                <p className="text-2xl font-bold">{transcript.length}</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="bg-primary/5 p-3 rounded-lg">
+                <p className="text-xs text-primary font-medium">{isZh ? "发言轮次" : "Turns"}</p>
+                <p className="text-2xl font-bold text-slate-900">{transcript.length}</p>
               </div>
-              <div className="bg-white/10 p-3 rounded">
-                <p className="text-xs opacity-75">{isZh ? "辩手数" : "Agents"}</p>
-                <p className="text-2xl font-bold">{allDebaters.length}</p>
+              <div className="bg-primary/5 p-3 rounded-lg">
+                <p className="text-xs text-primary font-medium">{isZh ? "辩手数" : "Agents"}</p>
+                <p className="text-2xl font-bold text-slate-900">{allDebaters.length}</p>
               </div>
               {structuredReport?.clash_points && (
-                <div className="bg-white/10 p-3 rounded col-span-2">
-                  <p className="text-xs opacity-75">{isZh ? "争议焦点" : "Clash Points"}</p>
-                  <p className="text-2xl font-bold">{structuredReport.clash_points.length}</p>
+                <div className="bg-primary/5 p-3 rounded-lg col-span-2">
+                  <p className="text-xs text-primary font-medium">{isZh ? "争议焦点" : "Clash Points"}</p>
+                  <p className="text-2xl font-bold text-slate-900">{structuredReport.clash_points.length}</p>
                 </div>
               )}
             </div>

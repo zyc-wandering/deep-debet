@@ -82,8 +82,8 @@ export default function ResearchPhase() {
         className="flex flex-col items-center justify-center min-h-[60vh] gap-8"
       >
         <motion.div
-          animate={{ rotate: 360 }}
-          transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+          animate={{ scale: [1, 1.08, 1] }}
+          transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
         >
           <Users className="w-16 h-16 text-primary" />
         </motion.div>
@@ -155,7 +155,7 @@ export default function ResearchPhase() {
   }
 
   return (
-    <div className="flex flex-col max-w-4xl mx-auto gap-8">
+    <div className="flex flex-col max-w-4xl mx-auto gap-6">
       {/* Status bar */}
       <div className="flex flex-wrap justify-between gap-4 p-6 bg-white rounded-xl shadow-sm border border-primary/10">
         <div className="flex min-w-72 flex-col gap-2">
@@ -183,7 +183,7 @@ export default function ResearchPhase() {
           </div>
           <div className="h-3 rounded-full bg-primary/10 overflow-hidden">
             <div
-              className="h-full bg-primary transition-all duration-500"
+              className="h-full bg-primary rounded-full transition-all duration-500"
               style={{ width: `${progress}%` }}
             />
           </div>
@@ -229,8 +229,9 @@ export default function ResearchPhase() {
                   {focusOptions.map((opt: FocusOption) => (
                     <motion.div
                       key={opt.id}
-                      whileHover={{ scale: 1.02 }}
+                      whileHover={{ scale: 1.01 }}
                       whileTap={{ scale: 0.98 }}
+                      transition={{ type: "tween", duration: 0.15 }}
                       onClick={() => setSelectedFocus(opt.id)}
                       className={`cursor-pointer bg-white border-2 rounded-xl p-5 transition-all shadow-sm flex flex-col gap-4 ${
                         selectedFocusId === opt.id
@@ -261,15 +262,15 @@ export default function ResearchPhase() {
                     <Zap className="text-primary w-5 h-5" />
                     <span className="font-semibold">{isZh ? "辩论强度" : "Debate Intensity"}</span>
                   </div>
-                  <div className="flex h-10 items-center rounded-lg bg-primary/5 p-1 border border-primary/10">
+                  <div className="flex h-11 items-center rounded-lg bg-primary/5 p-1 border border-primary/10">
                     {(["mild", "balanced", "intense"] as const).map((level) => (
                       <button
                         key={level}
                         onClick={() => setIntensityDraft(level)}
                         className={`flex-1 h-full rounded-md text-sm font-medium transition-all ${
                           intensityDraft === level
-                            ? "bg-primary text-white"
-                            : "text-slate-600 hover:bg-primary/10"
+                            ? "bg-primary text-white shadow-sm"
+                            : "text-slate-500 hover:text-slate-700 hover:bg-primary/5"
                         }`}
                       >
                         {level === "mild"
@@ -301,7 +302,7 @@ export default function ResearchPhase() {
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: 0.4 }}
-                  className="flex justify-between items-center p-6 bg-slate-100 rounded-xl border border-slate-200 mt-6"
+                  className="flex justify-between items-center p-6 bg-primary/5 rounded-xl border border-primary/10 mt-6"
                 >
                   <div className="flex items-center gap-3">
                     <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />

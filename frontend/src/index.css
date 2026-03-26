@@ -5,6 +5,12 @@
   --color-primary: #d46211;
   --color-bg: #f8f7f6;
   --color-arena: #0f172a;
+  --color-surface: #ffffff;
+  --color-surface-muted: #f3f2f0;
+}
+
+html {
+  scroll-behavior: smooth;
 }
 
 body {
@@ -18,6 +24,12 @@ body {
     sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* Consistent focus ring */
+*:focus-visible {
+  outline: 2px solid oklch(from var(--color-primary) l c h / 0.5);
+  outline-offset: 2px;
 }
 
 /* Custom range input */

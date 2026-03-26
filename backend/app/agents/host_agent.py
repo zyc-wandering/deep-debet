@@ -10,6 +10,7 @@ from app.models import (
     DebateLanguage,
     DebateMessage,
     FocusOption,
+    HostConclusion,
     SearchResult,
     StructuredReport,
 )
@@ -108,6 +109,87 @@ class HostAgent:
             result_count=len(all_results),
         )
         return brief, all_results
+
+    async def research_topic_stream(
+        self, topic: str
+    ) -> AsyncGenerator[Tuple[str, List[SearchResult]] | str, None]:
+        """Stream version of research_topic.
+
+        Yields:
+            str tokens as they arrive from the LLM.
+        After all tokens are yielded, yields a final
+            Tuple[str, List[SearchResult]] with the full brief and references.
+        """
+        research_start = monotonic()
+        queries = [topic]
+        if self.debate_language == DebateLanguage.en:
+            queries.extend([f"{topic} controversy", f"{topic} data research report"])
+        else:
+            queries.extend([f"{topic} 争议", f"{topic} 数据 研究 报告"])
+
+        all_results: List[SearchResult] = []
+        for query in queries:
+            try:
+                debate_logger.search_request(query, "tavily", 3)
+                results = await self.search.search(query, num_results=3)
+                all_results.extend(results)
+            except Exception as exc:
+                debate_logger.warning(
+                    f"Search failed for query: {query}",
+                    event_type="search_error",
+                    query=query,
+                    error=str(exc),
+                )
+                continue
+
+        citations_text = "\n".join(
+            f"- {r.title}: {r.snippet[:160]} ({r.url})" for r in all_results[:9]
+        )
+        if not citations_text:
+            if self.debate_language == DebateLanguage.en:
+                citations_text = "- No usable external materials were retrieved. Explicitly distinguish known facts, inference, and verification gaps."
+            else:
+                citations_text = "- 未检索到可用外部材料。请明确区分已知、推测与待验证部分。"
+
+        prompt = build_research_prompt(topic, citations_text, language=self.debate_language)
+        debate_logger.llm_request("host", "research_topic", {"topic": topic}, prompt_length=len(prompt))
+
+        llm_start = monotonic()
+        parts: list[str] = []
+        try:
+            async for token in self.llm.chat_stream(self._system_prompt(), prompt):
+                parts.append(token)
+                yield token
+        except Exception as exc:
+            debate_logger.llm_response(
+                "host",
+                "research_topic",
+                duration_sec=monotonic() - llm_start,
+                token_count=0,
+                response_length=0,
+                success=False,
+                error=str(exc),
+            )
+            raise
+
+        brief = "".join(parts).strip()
+        debate_logger.llm_response(
+            "host",
+            "research_topic",
+            duration_sec=monotonic() - llm_start,
+            token_count=len(parts),
+            response_length=len(brief),
+            success=True,
+        )
+        debate_logger.info(
+            "Research completed (streaming)",
+            event_type="research_complete",
+            duration_sec=monotonic() - research_start,
+            query_count=len(queries),
+            result_count=len(all_results),
+        )
+        # Final yield: the complete result tuple
+        yield (brief, all_results)
 
     async def create_debaters(
         self,
@@ -332,22 +414,26 @@ class HostAgent:
             argument_nodes_count=len(report.argument_nodes),
         )
 
-        # 验证 host_conclusion - 支持新的结构化格式（含 reasoning_list）或旧格式
+        # 验证 host_conclusion - 支持 HostConclusion 对象、dict 或旧版字符串
         host_conclusion_valid = False
-        if isinstance(report.host_conclusion, dict):
-            # 新格式：检查是否有 winning_argument 和 reasoning_list
-            hc = report.host_conclusion
+        hc = report.host_conclusion
+        if isinstance(hc, HostConclusion):
             host_conclusion_valid = (
-                hc.get("winning_argument")
-                and hc.get("strongest_debater")
+                bool(hc.winning_argument)
+                and bool(hc.strongest_debater)
+                and len(hc.reasoning_list) >= 2
+            )
+        elif isinstance(hc, dict):
+            host_conclusion_valid = (
+                bool(hc.get("winning_argument"))
+                and bool(hc.get("strongest_debater"))
                 and len(hc.get("reasoning_list", [])) >= 2
             )
-        elif isinstance(report.host_conclusion, str):
-            # 旧格式：检查是否包含必要的 token
+        elif isinstance(hc, str):
             if self.debate_language == DebateLanguage.en:
-                host_conclusion_valid = all(token in report.host_conclusion for token in ["Winning View", "Strongest Debater"])
+                host_conclusion_valid = all(token in hc for token in ["Winning View", "Strongest Debater"])
             else:
-                host_conclusion_valid = all(token in report.host_conclusion for token in ["胜出观点", "最强辩手"])
+                host_conclusion_valid = all(token in hc for token in ["胜出观点", "最强辩手"])
 
         if not host_conclusion_valid:
             if self.debate_language == DebateLanguage.en:
@@ -362,11 +448,15 @@ class HostAgent:
                     '"strongest_debater"（最强辩手）、"reasoning"（裁决概述）、'
                     '"reasoning_list"（2-3个独立胜出原因的字符串数组）'
                 )
-            raw_output = (
-                report.host_conclusion
-                if isinstance(report.host_conclusion, str)
-                else str(report.host_conclusion)
-            )
+            # Serialize original conclusion for repair prompt
+            if isinstance(hc, HostConclusion):
+                raw_output = hc.model_dump_json()
+            elif isinstance(hc, dict):
+                import json as _json
+                raw_output = _json.dumps(hc, ensure_ascii=False)
+            else:
+                raw_output = str(hc)
+
             repaired = await self._chat_markdown_with_requirements(
                 user_prompt=build_markdown_repair_prompt(
                     requirements=repair_requirements,
@@ -376,23 +466,25 @@ class HostAgent:
                 requirements=repair_requirements,
                 required_tokens=["winning_argument", "strongest_debater", "reasoning_list"],
             )
-            # 尝试解析修复后的JSON
+            # Parse repaired JSON → HostConclusion
             try:
                 import json
-                repaired_dict = json.loads(repaired)
-                report.host_conclusion = repaired_dict
+                # Strip markdown code fences if present
+                cleaned = repaired.strip()
+                if cleaned.startswith("```"):
+                    # Remove opening fence (```json or ```)
+                    cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned[3:]
+                if cleaned.endswith("```"):
+                    cleaned = cleaned[:-3].rstrip()
+                repaired_dict = json.loads(cleaned)
+                report.host_conclusion = HostConclusion(**repaired_dict)
             except Exception:
+                # Last resort: store as HostConclusion with raw text in winning_argument
                 report.host_conclusion = repaired
-            conclusion_preview = (
-                str(report.host_conclusion)[:200]
-                if not isinstance(report.host_conclusion, str)
-                else report.host_conclusion[:200]
-            )
             debate_logger.info(
                 "Host conclusion repaired",
                 event_type="host_conclusion_repaired",
-                original_conclusion=conclusion_preview,
-                repaired_conclusion=repaired[:200],
+                repaired_conclusion=str(report.host_conclusion)[:200],
             )
         debate_logger.info(
             "summarize_debate_structured completed",

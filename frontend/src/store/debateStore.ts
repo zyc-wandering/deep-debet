@@ -60,6 +60,9 @@ interface DebateState {
   followUpTarget: string | null;
   isFollowUpStreaming: boolean;
 
+  viewPhase: Phase | null;
+  setViewPhase(phase: Phase | null): void;
+
   setPhase(phase: Phase): void;
   start(topic: string, debateLanguage: DebateLanguage): void;
   setSessionId(sessionId: string): void;
@@ -131,6 +134,7 @@ const ephemeralState = {
   followUpLiveResponse: "",
   followUpTarget: null as string | null,
   isFollowUpStreaming: false,
+  viewPhase: null as Phase | null,
 };
 
 const persistedState = {
@@ -427,6 +431,8 @@ export const useDebateStore = create<DebateState>()(
         })),
 
       setFollowUpStreaming: (isStreaming) => set({ isFollowUpStreaming: isStreaming }),
+
+      setViewPhase: (viewPhase) => set({ viewPhase }),
     }),
     {
       name: "debate-session",

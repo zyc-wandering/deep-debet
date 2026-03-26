@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { motion, AnimatePresence } from "motion/react";
 import { useDebateStore } from "./store/debateStore";
 import { useDebate } from "./hooks/useDebate";
 import { DebateConfig } from "./types";
@@ -26,7 +27,11 @@ function App() {
   const sessionId = useDebateStore((s) => s.sessionId);
   const errorMessage = useDebateStore((s) => s.errorMessage);
   const reset = useDebateStore((s) => s.reset);
+  const viewPhase = useDebateStore((s) => s.viewPhase);
+  const setViewPhase = useDebateStore((s) => s.setViewPhase);
   const debate = useDebate();
+
+  const displayPhase = viewPhase ?? phase;
 
   useEffect(() => {
     const storedId = sessionId;
@@ -93,9 +98,24 @@ function App() {
     });
   };
 
-  if (phase === "arena") {
+  const phaseOrder = ["config", "research", "drafting", "arena", "summary"];
+  const currentIdx = phaseOrder.indexOf(phase);
+
+  const isNavClickable = (p: string): boolean => {
+    if (p !== "arena" && p !== "summary") return false;
+    if (sessionStatus !== "done") return false;
+    const stepIdx = phaseOrder.indexOf(p);
+    return stepIdx <= currentIdx && p !== displayPhase;
+  };
+
+  const handleNavClick = (p: string) => {
+    if (!isNavClickable(p)) return;
+    setViewPhase(p === phase ? null : (p as typeof phase));
+  };
+
+  if (displayPhase === "arena") {
     return (
-      <div className="min-h-screen bg-arena text-slate-200 font-sans">
+      <div className="h-screen bg-arena text-slate-200 font-sans overflow-hidden">
         {errorMessage && <ErrorBanner message={errorMessage} onReset={reset} />}
         <ArenaPhase />
       </div>
@@ -111,25 +131,48 @@ function App() {
           </div>
           <h2 className="text-lg font-bold">Multi-Agent Debate Room</h2>
         </div>
-        <nav className="hidden md:flex items-center gap-8 text-sm font-medium">
-          {(["research", "drafting", "arena", "summary"] as const).map((p) => (
-            <span
-              key={p}
-              className={
-                phase === p
-                  ? "text-primary border-b-2 border-primary pb-1"
-                  : "text-slate-400"
-              }
-            >
-              {p === "research"
-                ? "Research"
-                : p === "drafting"
-                  ? "Drafting"
-                  : p === "arena"
-                    ? "Arena"
-                    : "Summary"}
-            </span>
-          ))}
+        <nav className="hidden md:flex items-center gap-1 text-sm font-medium">
+          {(["research", "drafting", "arena", "summary"] as const).map((p, i, arr) => {
+            const stepIdx = phaseOrder.indexOf(p);
+            const isActive = displayPhase === p;
+            const isPast = stepIdx < currentIdx;
+            const clickable = isNavClickable(p);
+            const label = p === "research" ? "Research" : p === "drafting" ? "Drafting" : p === "arena" ? "Arena" : "Summary";
+            return (
+              <div key={p} className="flex items-center gap-1">
+                <div
+                  className={`flex items-center gap-2 ${clickable ? "cursor-pointer group" : ""}`}
+                  onClick={() => handleNavClick(p)}
+                >
+                  <span
+                    className={`w-6 h-6 rounded-full text-xs font-bold flex items-center justify-center transition-all duration-300 ${
+                      isActive
+                        ? "bg-primary text-white"
+                        : isPast
+                          ? `bg-primary/20 text-primary ${clickable ? "group-hover:bg-primary/40" : ""}`
+                          : "bg-slate-200 text-slate-400"
+                    }`}
+                  >
+                    {i + 1}
+                  </span>
+                  <span
+                    className={`transition-colors duration-300 ${
+                      isActive
+                        ? "text-primary font-bold"
+                        : isPast
+                          ? `text-slate-600 ${clickable ? "group-hover:text-primary" : ""}`
+                          : "text-slate-400"
+                    }`}
+                  >
+                    {label}
+                  </span>
+                </div>
+                {i < arr.length - 1 && (
+                  <div className={`w-8 h-px mx-1 transition-colors duration-300 ${isPast ? "bg-primary/30" : "bg-slate-200"}`} />
+                )}
+              </div>
+            );
+          })}
         </nav>
       </header>
 
@@ -137,10 +180,28 @@ function App() {
         <div className="w-full max-w-6xl">
           {errorMessage && <ErrorBanner message={errorMessage} onReset={reset} />}
 
-          {phase === "config" && <ConfigPhase onStart={handleStart} />}
-          {phase === "research" && <ResearchPhase />}
-          {phase === "drafting" && <DraftingPhase />}
-          {phase === "summary" && <SummaryPhase />}
+          <AnimatePresence mode="wait">
+            {displayPhase === "config" && (
+              <motion.div key="config" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
+                <ConfigPhase onStart={handleStart} />
+              </motion.div>
+            )}
+            {displayPhase === "research" && (
+              <motion.div key="research" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
+                <ResearchPhase />
+              </motion.div>
+            )}
+            {displayPhase === "drafting" && (
+              <motion.div key="drafting" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
+                <DraftingPhase />
+              </motion.div>
+            )}
+            {displayPhase === "summary" && (
+              <motion.div key="summary" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
+                <SummaryPhase />
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       </main>
     </div>

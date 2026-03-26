@@ -30,7 +30,17 @@
       "Bash(cmd /c \"type %USERPROFILE%\\\\.claude\\\\claude_desktop_config.json\")",
       "Bash(cmd /c \"dir %USERPROFILE%\\\\.claude\"\")",
       "WebFetch(domain:docs.perplexity.ai)",
-      "Bash(.venv/Scripts/python.exe -m pytest tests/ -x -q)"
+      "Bash(.venv/Scripts/python.exe -m pytest tests/ -x -q)",
+      "Bash(ls -la \"D:\\\\projects\\\\debet_room_codex\\\\frontend\"\" | grep -E \"config)",
+      "Bash(rc \")",
+      "Bash(powershell.exe -Command \"Get-ChildItem ''D:\\\\projects\\\\debet_room_codex\\\\backend'' -Recurse -Filter ''*.log'' | Sort-Object LastWriteTime -Descending | Select-Object -First 5 -Property FullName\")",
+      "Bash(powershell.exe -Command \"Get-Content ''D:\\\\projects\\\\debet_room_codex\\\\backend\\\\backend.20260319-231605.stderr.log'' -Tail 150\")",
+      "Bash(powershell.exe -Command \"Get-Content ''D:\\\\projects\\\\debet_room_codex\\\\backend\\\\backend.20260319-231605.stdout.log'' -Tail 200\")",
+      "Bash(powershell.exe -Command \"cd D:\\\\projects\\\\debet_room_codex\\\\backend; .\\\\.venv\\\\Scripts\\\\python.exe -c ''import app.orchestrator; import app.agents.host_agent; import app.providers.llm_openai_compat; print\\(\"\"OK\"\"\\)''\")",
+      "Bash(powershell.exe -Command \"cd D:\\\\projects\\\\debet_room_codex\\\\backend; .\\\\.venv\\\\Scripts\\\\python.exe -c \"\"import app.orchestrator; import app.agents.host_agent; import app.providers.llm_openai_compat; print\\(''OK''\\)\"\"\")",
+      "Bash(find D:projectsdebet_room_codexbackend -name .env.example -o -name *.env*)",
+      "Bash(powershell.exe -Command \"cd D:\\\\projects\\\\debet_room_codex\\\\backend; .\\\\.venv\\\\Scripts\\\\python.exe -c \"\"from app.providers.base import LLMProvider; from app.providers.llm_openai_compat import OpenAICompatProvider, ContentFilterError; from app.main import _make_llm_provider; from app.orchestrator import DebateOrchestrator; from app.agents.host_agent import HostAgent; print\\(''All imports OK''\\)\"\"\")",
+      "Bash(powershell.exe -Command \"cd D:\\\\projects\\\\debet_room_codex\\\\backend; .\\\\.venv\\\\Scripts\\\\python.exe -c \"\"from app.agents.host_agent import HostAgent; print\\(''Backend imports OK''\\)\"\"\")"
     ]
   }
 }

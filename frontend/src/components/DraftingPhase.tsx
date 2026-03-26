@@ -58,7 +58,10 @@ export default function DraftingPhase() {
           </div>
         </div>
 
-        <div className="flex gap-4 overflow-x-auto pb-6 snap-x">
+        <div
+          className="flex gap-4 overflow-x-auto pb-6 snap-x"
+          style={{ maskImage: "linear-gradient(to right, black 85%, transparent)", WebkitMaskImage: "linear-gradient(to right, black 85%, transparent)" }}
+        >
           {debaters.map((agent) => (
             <div key={agent.id} className="flex-none w-64 snap-start group">
               <div className="relative bg-white border border-slate-200 rounded-2xl overflow-hidden transition-all hover:border-primary/50 hover:shadow-lg">
@@ -97,7 +100,7 @@ export default function DraftingPhase() {
             </span>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {substituteDebaters.map((sub, subIdx) => (
               <div
                 key={sub.id}
@@ -117,10 +120,16 @@ export default function DraftingPhase() {
                       {openSwapIdx === subIdx && (
                         <>
                           <div className="fixed inset-0 z-10" onClick={() => setOpenSwapIdx(null)} />
-                          <div className="absolute right-0 top-full mt-2 bg-white border border-slate-200 shadow-xl rounded-lg p-2 z-20 w-48">
-                            <p className="text-xs font-bold text-slate-500 mb-2">
+                          <motion.div
+                            initial={{ opacity: 0, scale: 0.95, y: -4 }}
+                            animate={{ opacity: 1, scale: 1, y: 0 }}
+                            transition={{ duration: 0.15 }}
+                            className="absolute right-0 top-full mt-2 bg-white border border-slate-200 shadow-xl rounded-xl p-2 z-20 w-48"
+                          >
+                            <p className="text-xs font-bold text-slate-500 mb-2 px-2">
                               {isZh ? "替换:" : "Swap with:"}
                             </p>
+                            <div className="divide-y divide-slate-100">
                             {debaters.map((sel, selIdx) => (
                               <button
                                 key={sel.id}
@@ -128,12 +137,13 @@ export default function DraftingPhase() {
                                   swapDebater(selIdx, subIdx);
                                   setOpenSwapIdx(null);
                                 }}
-                                className="w-full text-left px-2 py-1 text-sm hover:bg-primary/10 hover:text-primary rounded cursor-pointer"
+                                className="w-full text-left px-3 py-2 text-sm hover:bg-primary/10 hover:text-primary rounded-lg cursor-pointer transition-colors"
                               >
-                                {sel.name}
+                                {sel.avatar_emoji} {sel.name}
                               </button>
                             ))}
-                          </div>
+                            </div>
+                          </motion.div>
                         </>
                       )}
                     </div>
@@ -155,7 +165,7 @@ export default function DraftingPhase() {
       )}
 
       {/* Bottom bar */}
-      <div className="fixed bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-bg via-bg/95 to-transparent flex justify-center items-end h-40 pointer-events-none z-20">
+      <div className="fixed bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-bg from-10% via-bg/98 via-50% to-transparent flex justify-center items-end h-32 pointer-events-none z-20">
         <div className="max-w-6xl w-full flex flex-col md:flex-row items-center justify-between gap-6 pointer-events-auto">
           <div className="hidden md:block">
             <p className="text-slate-500 text-sm font-medium">
@@ -165,7 +175,7 @@ export default function DraftingPhase() {
           <button
             onClick={handleStart}
             disabled={confirming}
-            className={`flex-1 md:flex-none px-12 h-14 rounded-xl text-white font-bold transition-all flex items-center justify-center gap-3 shadow-lg shadow-primary/20 ${
+            className={`w-full md:w-auto px-8 h-14 rounded-xl text-white font-bold transition-all flex items-center justify-center gap-3 shadow-[0_4px_16px_rgba(212,98,17,0.25)] active:scale-[0.98] ${
               confirming
                 ? "bg-primary/50 cursor-not-allowed"
                 : "bg-primary hover:opacity-90 cursor-pointer"

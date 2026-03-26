@@ -147,8 +147,36 @@ class DebateOrchestrator:
                     topic=request.topic,
                 )
                 research_start = monotonic()
+                brief = ""
+                references: list = []
                 with debate_logger.span_context("host:research"):
-                    brief, references = await host.research_topic(request.topic)
+                    token_buf = ""
+                    async for item in host.research_topic_stream(request.topic):
+                        if isinstance(item, tuple):
+                            # Final yield: (brief, references)
+                            brief, references = item
+                        else:
+                            # Streaming token
+                            token_buf += item
+                            # Flush in small chunks for smooth rendering
+                            while len(token_buf) >= 12:
+                                chunk = token_buf[:12]
+                                token_buf = token_buf[12:]
+                                yield SSEEvent(
+                                    event="host_research",
+                                    data=with_trace_metadata(
+                                        {"session_id": session.session_id, "chunk": chunk}
+                                    ),
+                                )
+                    # Flush remaining buffer
+                    if token_buf:
+                        yield SSEEvent(
+                            event="host_research",
+                            data=with_trace_metadata(
+                                {"session_id": session.session_id, "chunk": token_buf}
+                            ),
+                        )
+
                 research_duration = monotonic() - research_start
                 debate_logger.info(
                     "Topic research completed",
@@ -160,15 +188,6 @@ class DebateOrchestrator:
                 session.brief = brief
                 session.research_references = references
                 self.session_store.update(session)
-
-                for chunk in chunk_text(brief, chunk_size=36):
-                    yield SSEEvent(
-                        event="host_research",
-                        data=with_trace_metadata(
-                            {"session_id": session.session_id, "chunk": chunk}
-                        ),
-                    )
-                    await asyncio.sleep(0.015)
 
                 debate_logger.info(
                     "Extracting focus options", event_type="focus_extraction_start"

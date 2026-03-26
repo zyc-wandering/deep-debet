@@ -121,7 +121,7 @@ export default function ConfigPhase({ onStart }: Props) {
                 <button
                   key={spot}
                   onClick={() => setConfig({ ...config, topic: spot })}
-                  className="px-3 py-1.5 rounded-full bg-primary/10 border border-primary/20 text-primary text-xs font-medium hover:bg-primary hover:text-white transition-all"
+                  className="px-3 py-1.5 rounded-full bg-primary/10 border border-primary/20 text-primary text-xs font-medium hover:bg-primary/20 hover:border-primary/40 transition-all"
                 >
                   {spot}
                 </button>
@@ -131,24 +131,25 @@ export default function ConfigPhase({ onStart }: Props) {
         </div>
 
         {/* Settings Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+        <div className="bg-bg/50 rounded-xl p-5 border border-primary/5">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {/* Language */}
-          <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-3">
             <div className="flex items-center gap-2">
               <Globe className="text-primary w-5 h-5" />
               <label className="text-base font-semibold">
                 {config.language === "zh" ? "讨论语言" : "Discussion Language"}
               </label>
             </div>
-            <div className="flex h-12 items-center justify-center rounded-lg bg-primary/5 p-1 border border-primary/10">
+            <div className="flex h-11 items-center justify-center rounded-lg bg-white p-1 border border-primary/10">
               {(["zh", "en"] as const).map((lang) => (
                 <button
                   key={lang}
                   onClick={() => setConfig({ ...config, language: lang })}
                   className={`flex-1 h-full rounded-md text-sm font-medium transition-all ${
                     config.language === lang
-                      ? "bg-primary text-white"
-                      : "text-slate-600 hover:bg-primary/10"
+                      ? "bg-primary text-white shadow-sm"
+                      : "text-slate-500 hover:text-slate-700 hover:bg-primary/5"
                   }`}
                 >
                   {lang === "zh" ? "中文" : "English"}
@@ -158,50 +159,53 @@ export default function ConfigPhase({ onStart }: Props) {
           </div>
 
           {/* Debater count */}
-          <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-3">
             <div className="flex items-center gap-2">
               <Users className="text-primary w-5 h-5" />
               <label className="text-base font-semibold">
                 {config.language === "zh" ? "辩手数量" : "Number of Debaters"}
               </label>
             </div>
-            <select
-              className="w-full h-12 rounded-lg border border-primary/20 bg-bg/50 px-4 focus:ring-primary/50 focus:border-primary outline-none"
-              value={config.numDebaters}
-              onChange={(e) => {
-                const numDebaters = parseInt(e.target.value, 10);
-                setConfig({
-                  ...config,
-                  numDebaters,
-                  maxRounds: snapRoundsToDebaterStep(config.maxRounds, numDebaters),
-                });
-              }}
-            >
+            <div className="flex h-11 items-center justify-center rounded-lg bg-white p-1 border border-primary/10">
               {DEBATER_COUNT_OPTIONS.map((num) => (
-                <option key={num} value={num}>
-                  {num} {config.language === "zh" ? "位辩手" : "Agents"}
-                </option>
+                <button
+                  key={num}
+                  onClick={() => {
+                    setConfig({
+                      ...config,
+                      numDebaters: num,
+                      maxRounds: snapRoundsToDebaterStep(config.maxRounds, num),
+                    });
+                  }}
+                  className={`flex-1 h-full rounded-md text-sm font-medium transition-all ${
+                    config.numDebaters === num
+                      ? "bg-primary text-white shadow-sm"
+                      : "text-slate-500 hover:text-slate-700 hover:bg-primary/5"
+                  }`}
+                >
+                  {num}
+                </button>
               ))}
-            </select>
+            </div>
           </div>
 
           {/* Model variant */}
-          <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-3">
             <div className="flex items-center gap-2">
               <Cpu className="text-primary w-5 h-5" />
               <label className="text-base font-semibold">
                 {config.language === "zh" ? "模型档位" : "Model Variant"}
               </label>
             </div>
-            <div className="flex h-12 items-center justify-center rounded-lg bg-primary/5 p-1 border border-primary/10">
+            <div className="flex h-11 items-center justify-center rounded-lg bg-white p-1 border border-primary/10">
               {(["lite", "pro"] as const).map((v) => (
                 <button
                   key={v}
                   onClick={() => setConfig({ ...config, modelVariant: v })}
                   className={`flex-1 h-full rounded-md text-sm font-medium transition-all ${
                     config.modelVariant === v
-                      ? "bg-primary text-white"
-                      : "text-slate-600 hover:bg-primary/10"
+                      ? "bg-primary text-white shadow-sm"
+                      : "text-slate-500 hover:text-slate-700 hover:bg-primary/5"
                   }`}
                 >
                   {v === "lite" ? "Lite" : "Pro"}
@@ -211,22 +215,22 @@ export default function ConfigPhase({ onStart }: Props) {
           </div>
 
           {/* Enable search */}
-          <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-3">
             <div className="flex items-center gap-2">
               <Search className="text-primary w-5 h-5" />
               <label className="text-base font-semibold">
                 {config.language === "zh" ? "联网搜索" : "Web Search"}
               </label>
             </div>
-            <div className="flex h-12 items-center justify-center rounded-lg bg-primary/5 p-1 border border-primary/10">
+            <div className="flex h-11 items-center justify-center rounded-lg bg-white p-1 border border-primary/10">
               {([false, true] as const).map((v) => (
                 <button
                   key={String(v)}
                   onClick={() => setConfig({ ...config, enableSearch: v })}
                   className={`flex-1 h-full rounded-md text-sm font-medium transition-all ${
                     config.enableSearch === v
-                      ? "bg-primary text-white"
-                      : "text-slate-600 hover:bg-primary/10"
+                      ? "bg-primary text-white shadow-sm"
+                      : "text-slate-500 hover:text-slate-700 hover:bg-primary/5"
                   }`}
                 >
                   {v
@@ -238,7 +242,7 @@ export default function ConfigPhase({ onStart }: Props) {
           </div>
 
           {/* Max rounds */}
-          <div className="flex flex-col gap-4 md:col-span-2">
+          <div className="flex flex-col gap-3 md:col-span-2">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Repeat className="text-primary w-5 h-5" />
@@ -270,13 +274,14 @@ export default function ConfigPhase({ onStart }: Props) {
             </div>
           </div>
         </div>
+        </div>
 
         {/* Start button */}
         <div className="pt-4">
           <button
             onClick={() => onStart(config)}
             disabled={!config.topic.trim()}
-            className="w-full flex items-center justify-center gap-2 bg-primary hover:bg-primary/90 text-white font-bold text-lg py-4 rounded-xl shadow-lg shadow-primary/20 transition-all disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
+            className="w-full flex items-center justify-center gap-2 bg-primary hover:bg-primary/90 text-white font-bold text-lg h-14 rounded-xl shadow-[0_4px_16px_rgba(212,98,17,0.25)] transition-all active:scale-[0.98] disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
           >
             <PlayCircle className="w-6 h-6" />
             {config.language === "zh" ? "开始辩论" : "Start Debate"}
