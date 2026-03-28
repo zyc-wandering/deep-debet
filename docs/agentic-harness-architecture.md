@@ -176,6 +176,8 @@ flowchart LR
 
 `coding agent` 应优先读取该结构化描述和附件，而不是只看摘要文本。
 
+> 针对 Debate 项目的 failure bundle 扩展 schema，参见 [agentic-harness-debate-scenarios.md - Failure Bundle Schema](./agentic-harness-debate-scenarios.md#debate-specific-failure-bundle-schema)。
+
 ## Workflow Modes
 
 ### Mode A: Preprod Validation and Repair
@@ -223,9 +225,21 @@ sequenceDiagram
 该模式与预发主链路的不同点如下：
 
 - 触发源是开发者显式发起的分支自测
-- 可以降低 `Gate 1` 的人工参与度，对高置信错误自动进入只读诊断
+- 可以降低 `Gate 1` 的人工参与度，对满足自动分诊条件的错误自动进入只读诊断
 - 自动修复只允许落在开发者分支的派生分支上
 - 产出的是给开发者审阅的大 PR 或 patch proposal，而不是直接面向主分支
+
+#### Auto-triage Criteria
+
+在 Mode B 中，满足以下**全部**条件时，允许跳过 Gate 1 人工确认，自动进入只读诊断阶段：
+
+1. **置信度阈值**：validator 输出的 `confidence >= 0.9`
+2. **模式命中**：失败现象匹配 pattern registry 中的已知缺陷模式（例如 `selector-not-found`、`api-field-drift`、`null-pointer-in-render`）
+3. **非 Flaky**：该场景不在 known-flaky 列表中，且最近 3 次运行无 flap（交替通过/失败）
+4. **风险等级**：场景的 `risk_level` 为 `low` 或 `medium`，`high` 级场景始终要求人工确认
+5. **冷却期**：同一 `scenario_id` 在过去 30 分钟内未触发过 auto-triage，防止循环误判
+
+任一条件不满足时，回退到人工审核流程。所有 auto-triage 决策（无论通过或拒绝）均写入审计表，包含完整判定依据。
 
 ```mermaid
 flowchart TD
@@ -258,13 +272,23 @@ stateDiagram-v2
     WaitingForFixApproval --> Fixing
     Fixing --> ValidatingFix
     ValidatingFix --> WaitingForPRReview
+    ValidatingFix --> FixFailed
+    FixFailed --> Fixing : retry (max 2)
+    FixFailed --> BacklogOnly : retries exhausted / human abort
     WaitingForPRReview --> ReworkRequired
     WaitingForPRReview --> Merged
+    ReworkRequired --> Fixing : human requests re-fix
     Passed --> [*]
     RejectedAsNoise --> [*]
     BacklogOnly --> [*]
     Merged --> [*]
 ```
+
+#### 失败回退规则
+
+- **回归失败重试**：`ValidatingFix → FixFailed` 后，orchestrator 将回归失败的测试输出和错误日志注入 coding agent 上下文，允许重新进入 `Fixing` 状态。每个 workflow run 最多重试 2 次（通过 `retry_count` 字段跟踪），超过后自动转入 `BacklogOnly` 并创建 ticket。
+- **PR 拒绝重修**：`ReworkRequired` 不再是终态。人类审阅者拒绝 PR 后可选择"请求重新修复"，此时 reviewer 的反馈意见注入 coding agent 上下文，重新进入 `Fixing` 阶段。若人类选择"放弃修复"则转入 `BacklogOnly`。
+- **人工中止**：在 `FixFailed` 状态下，人类可以随时选择中止修复流程，直接转入 `BacklogOnly`。
 
 ## Permission Model
 
@@ -317,6 +341,29 @@ stateDiagram-v2
   第三方物流、短信、地图、支付、回调等外部依赖探测。
 
 QA 的每小时巡检应优先使用第三层，避免在预发环境频繁跑高成本或破坏性全链路流程。
+
+#### 场景映射示例
+
+| 层级 | Scenario ID | 描述 | 建议频率 | 典型耗时 |
+|---|---|---|---|---|
+| Smoke | `smoke-health-check` | 健康检查端点可达、登录页可加载 | 每次部署 + 每 15 分钟 | < 30s |
+| Smoke | `smoke-core-navigation` | 核心导航路径可点击、无 JS 报错 | 每次部署 | < 1min |
+| Smoke | `smoke-api-schema` | OpenAPI schema 结构未发生破坏性变更 | 每次部署 | < 10s |
+| Business E2E | `e2e-order-create` | 创建运单完整流程（填写→提交→确认） | 每次部署 + 每小时 | 2-5min |
+| Business E2E | `e2e-status-sync` | 物流状态回调后 UI 正确更新 | 每次部署 | 1-3min |
+| Business E2E | `e2e-export-reconciliation` | 对账导出文件格式和数据完整性 | 每日 | 3-5min |
+| External Probes | `probe-logistics-api` | 第三方物流查询接口可达性和响应格式 | 每小时 | < 30s |
+| External Probes | `probe-sms-gateway` | 短信网关连通性（dry-run 模式） | 每小时 | < 15s |
+| External Probes | `probe-map-service` | 地图/地理编码服务可用性 | 每小时 | < 20s |
+
+#### 分类规则
+
+- 如果场景只涉及**可达性和基础渲染**，归入 Smoke
+- 如果场景覆盖**完整业务链路**且涉及数据写入或状态变更，归入 Business E2E
+- 如果场景的主要目的是**探测第三方依赖**的可用性而非验证自身逻辑，归入 External Probes
+- 同一业务链路可以同时有 Smoke 版本（只检查入口可达）和 E2E 版本（走完全流程）
+
+> 针对具体项目的场景设计，参见 [agentic-harness-debate-scenarios.md](./agentic-harness-debate-scenarios.md)。
 
 ## Auto-fix Policy
 

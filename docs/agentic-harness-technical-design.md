@@ -18,7 +18,7 @@
 
 - Language: `Python 3.12`
 - Service framework: `FastAPI`
-- Background execution: `Celery` 或 `Arq`
+- Background execution: `Arq`（推荐，见下方对比）
 - State store: `PostgreSQL`
 - Artifact metadata store: `PostgreSQL`
 - Binary artifact store: `S3-compatible object storage` 或本地 MinIO
@@ -28,6 +28,50 @@
 - `LangGraph` 的 Python 生态成熟，与现有后端技术栈衔接自然
 - 控制平面需要显式状态机、审批状态、运行日志和 artifact 索引，关系型数据库更稳
 - artifact 附件体积较大，适合对象存储
+
+### Trade-off Analysis
+
+#### Agent Framework
+
+| 维度 | LangGraph | CrewAI | AutoGen | 纯状态机（自研） |
+|---|---|---|---|---|
+| 显式状态机 | 一等公民，graph state + conditional edges | 无，依赖角色编排 | 无，基于会话流 | 完全自定义 |
+| Human-in-the-loop gate | 内置 interrupt/resume | 需自行实现 | 需自行实现 | 完全自定义 |
+| 工具权限动态切换 | 支持，node 级别切换 tool set | 不支持 | 不支持 | 完全自定义 |
+| Checkpoint / Resume | 内置持久化 checkpointer | 无 | 无 | 需自行实现 |
+| 可观测性 | LangSmith 集成 | 有限 | 有限 | 需自行实现 |
+| 生态成熟度 | 高，LangChain 生态 | 中 | 中 | 无生态 |
+| 学习曲线 | 中等 | 低 | 低 | 高（维护成本） |
+| 供应商锁定 | 中（LangChain 生态） | 低 | 低 | 无 |
+
+**决策**：选择 LangGraph。harness 的核心需求是显式状态机 + human gate + 工具权限分阶段切换 + checkpoint/resume，这四项在 LangGraph 中均为一等特性，其他框架需要大量自行实现。纯状态机虽然无锁定，但开发和维护成本显著更高。接受 LangChain 生态的中度锁定作为换取开发效率的代价。
+
+#### Sandbox Runtime
+
+| 维度 | OpenSandbox | Docker + gVisor | Firecracker | E2B |
+|---|---|---|---|---|
+| 进程隔离 | 容器级 + 用户态隔离 | 容器 + 系统调用过滤 | microVM 级 | 容器级（托管） |
+| 启动速度 | < 2s | < 3s | < 125ms | < 5s（含网络） |
+| 网络策略 | API 级 allowlist | iptables / CNI | 需自行配置 | 有限控制 |
+| 凭据注入 | API 原生支持 | 需 volume/env mount | 需 mmds/vsock | API 支持 |
+| Session 生命周期 API | 完整（创建/暂停/销毁） | 需自行封装 | 需自行封装 | 完整 |
+| 自托管 vs SaaS | 自托管 | 自托管 | 自托管 | SaaS |
+| 成本 | 基础设施成本 | 基础设施成本 | 基础设施成本 | 按量计费 |
+
+**决策**：选择 OpenSandbox。关键因素是 API 原生的凭据注入和网络策略控制，这两项是 harness 权限模型的核心需求。Docker+gVisor 虽然更通用但需要大量封装工作。Firecracker 隔离最强但启动后的工具链配置复杂度高。E2B 作为 SaaS 在数据合规和网络延迟上有顾虑。
+
+#### Background Execution
+
+| 维度 | Arq | Celery |
+|---|---|---|
+| Async 原生 | 是（原生 asyncio） | 否（需 gevent/eventlet 适配） |
+| Broker | Redis 仅 | Redis / RabbitMQ / SQS 等 |
+| 复杂度 | 轻量，单文件可配置 | 重，需 worker/beat/flower 等组件 |
+| 重试 / Cron | 内置 | 内置，功能更丰富 |
+| Worker 扩展 | 适合中等规模 | 适合大规模分布式 |
+| 监控 | 基础 | Flower + Prometheus exporter |
+
+**决策**：推荐 Arq。理由：harness 的控制平面是 async-first 架构（FastAPI + httpx + LangGraph），Arq 的原生 asyncio 支持避免了 Celery 的 async 适配问题。Redis 已经是 LangGraph checkpointer 的依赖，无需引入额外 broker。当前任务规模（workflow run 级别，非海量消息队列）在 Arq 的承载范围内。若未来规模超出 Arq 能力，可迁移至 Celery（任务接口兼容性高）。
 
 ### Sandbox Runtime
 
@@ -87,6 +131,41 @@ flowchart LR
     CS --> REPO["Repository Mirror / Git Clone"]
     CS --> OBJ
 ```
+
+## Repository Layout
+
+在深入各组件设计之前，先建立物理目录结构的心智模型。如果后续要在当前仓库内落地，建议新增以下目录：
+
+```text
+automation/
+  control_plane/
+    app/
+      api/
+      services/
+      models/
+      policies/
+      adapters/
+  graphs/
+    validator/
+    coding/
+  sandbox_profiles/
+    validator-linux-browser/
+    coding-linux-readonly/
+    coding-linux-fix/
+  prompts/
+    validator/
+    coding/
+  schemas/
+    failure_bundle.schema.json
+    diagnosis_report.schema.json
+  .github/
+    workflows/
+      harness-preprod.yml
+      harness-scheduled-probe.yml
+      harness-self-heal.yml
+```
+
+下文的组件设计将引用此目录结构中的路径。
 
 ## Core Components
 
@@ -601,6 +680,8 @@ flowchart TD
 - 不允许访问 git write credential
 - 不允许访问主仓库写入 token
 
+凭据命名约定：所有 validator sandbox 注入的环境变量使用 `HARNESS_VAL_` 前缀，例如 `HARNESS_VAL_PREPROD_TOKEN`、`HARNESS_VAL_LOG_QUERY_TOKEN`。sandbox 销毁时所有凭据随 session 一并清除。
+
 ### Coding Sandbox
 
 - 默认不允许访问预发业务环境
@@ -608,11 +689,59 @@ flowchart TD
 - fix 阶段只拿到短期 fix-branch push token
 - 禁止使用主分支写权限
 
+#### Read-only 阶段凭据
+
+- **实现**：GitHub App installation token，scope 为 `contents:read`
+- **TTL**：与 sandbox session 生命周期绑定，最长 2 小时
+- **注入方式**：通过 OpenSandbox credential API 注入为 `HARNESS_CODE_GIT_TOKEN`
+- **限制**：该 token 无法推送、创建分支或打开 PR
+
+#### Fix 阶段凭据
+
+- **推荐实现**：GitHub App installation token，scope 为 `contents:write`
+  - 通过 branch protection rule 限制该 token 只能推送到 `agent/fix/{workflow_run_id}` 命名模式的分支
+  - 主分支和其他受保护分支上的 push 被 branch protection 拦截
+- **备选实现**：Per-workflow deploy key（更简单但更难撤销，且无分支命名限制）
+- **TTL**：30 分钟，允许续期一次（总计最长 60 分钟）
+- **撤销触发条件**：
+  - Draft PR 已创建（正常结束）
+  - TTL 过期（超时）
+  - 回归测试失败且重试耗尽（修复失败）
+  - 人工在审批界面点击"中止修复"（人工中止）
+- **撤销方式**：control plane 调用 GitHub API 删除 installation token 或 revoke deploy key
+
 ### Approval Security
 
 - 审批操作要落到有身份的 GitHub 用户
 - 所有批准事件都需要写审计表
 - bot 不能自己批准自己的 PR
+
+#### 实现细节
+
+- **身份验证**：审批必须由 GitHub 认证用户发起，通过 PR review、issue comment 或 environment protection rule 触发
+- **Bot 自批限制**：在 CODEOWNERS 中排除 harness bot 账号，确保 bot 生成的 PR 必须由人类 approve
+- **审计表 schema**：每条审批记录包含 `workflow_run_id`、`gate_type`（bug_review / fix_approval / pr_review）、`approver`（GitHub username）、`decision`（approve / reject / abort）、`decided_at`（UTC timestamp）、`context`（审批时的附加评论）
+- **审批有效期**：Gate 2（fix approval）的审批结果在 4 小时内有效，超时后需重新审批
+
+## Harness Self-Observability
+
+Harness 系统本身也需要可观测性。以下是建议监控的核心维度：
+
+| 监控对象 | 关键指标 | 告警条件 |
+|---|---|---|
+| Sandbox Session | 创建成功率、平均存活时长、OOM kill 次数 | 创建失败率 > 5% 或 OOM 连续 2 次 |
+| LangGraph 执行 | 每 step 延迟、graph 总执行时间、卡死检测 | 单 step > 5min 或 graph 无进展 > 10min |
+| GitHub App Token | 剩余有效期、刷新成功率 | 有效期 < 5min 且刷新失败 |
+| Artifact Store | 写入延迟、存储使用量、上传失败率 | 写入延迟 P99 > 10s 或上传失败 |
+| Control Plane API | 请求错误率、队列深度、响应延迟 | 5xx 率 > 1% 或队列深度 > 50 |
+| Background Tasks (Arq) | 失败任务数、worker 心跳、重试率 | worker 心跳丢失 > 2min 或失败率 > 10% |
+
+### 实现建议
+
+- **Metrics 暴露**：control plane 提供 Prometheus 兼容的 `/metrics` 端点，供 Grafana 或其他面板消费
+- **结构化日志**：所有组件使用 JSON 格式日志，包含 `workflow_run_id`、`component`、`level`、`message` 字段，便于在 Loki / Elasticsearch 中检索
+- **健康检查增强**：`/api/health` 端点扩展为深度检查，包含 PostgreSQL 连通性、Redis 连通性、OpenSandbox API 可达性、artifact store 可写性
+- **Dead-man's switch**：scheduled probe workflow 应配置外部看门狗（例如 Healthchecks.io 或 PagerDuty heartbeat），如果 probe 在预期时间内未上报结果则触发告警，防止 "harness 本身挂了但无人知道" 的盲区
 
 ## Rollout Recommendation
 
@@ -647,39 +776,6 @@ flowchart TD
 - feature branch workflow_dispatch
 - auto-fix policy
 - developer review loop
-
-## Recommended Repository Layout
-
-如果后续要在当前仓库内落地，可以考虑新增：
-
-```text
-automation/
-  control_plane/
-    app/
-      api/
-      services/
-      models/
-      policies/
-      adapters/
-  graphs/
-    validator/
-    coding/
-  sandbox_profiles/
-    validator-linux-browser/
-    coding-linux-readonly/
-    coding-linux-fix/
-  prompts/
-    validator/
-    coding/
-  schemas/
-    failure_bundle.schema.json
-    diagnosis_report.schema.json
-  .github/
-    workflows/
-      harness-preprod.yml
-      harness-scheduled-probe.yml
-      harness-self-heal.yml
-```
 
 ## Recommendation
 
