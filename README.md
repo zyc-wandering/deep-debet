@@ -54,3 +54,8 @@ npm run dev
 - `OPENAI_BASE_URL` can point to any OpenAI-compatible endpoint (including Kimi-compatible gateways).
 - Do **not** commit real API keys.
 - Reports are generated under `data/reports/`.
+
+## Architecture Docs
+
+- `docs/agentic-harness-architecture.md`: reference architecture for a two-sandbox agentic harness workflow with human review gates and Mermaid diagrams
+- `docs/agentic-harness-technical-design.md`: technical design covering OpenSandbox, LangGraph, tool permissions, core components, and GitHub Actions workflows
