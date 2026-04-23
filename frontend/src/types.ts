@@ -33,6 +33,8 @@ export interface DebaterConfig {
   speaking_style: string;
   avatar_emoji: string;
   avatar_url?: string;
+  gender?: "male" | "female" | "nonbinary" | "unknown" | string;
+  avatar_id?: string;
 }
 
 export interface FocusOption {

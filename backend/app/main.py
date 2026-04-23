@@ -9,6 +9,7 @@ from fastapi import FastAPI, HTTPException, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse, StreamingResponse, FileResponse
 
+from app.avatars.library import AVATAR_LIBRARY_PREFIX, get_avatar_library
 from app.config import ensure_directories, settings
 from app.execution.turn_executor import DebaterTurnExecutor
 from app.models import (
@@ -427,9 +428,21 @@ async def get_image(path: str) -> FileResponse:
     """Serve generated images from debate directories.
 
     Accepts either:
+    - A checked-in avatar library path like avatar-library/{filename}
     - An absolute path to an image file (validated within debates_dir)
     - A relative path like {debate_folder}/images/{filename}
     """
+    normalized = path.replace("\\", "/")
+    if normalized.startswith(AVATAR_LIBRARY_PREFIX):
+        avatar_path = get_avatar_library().resolve_path(normalized)
+        if not avatar_path:
+            raise HTTPException(status_code=404, detail="Image not found")
+        return FileResponse(
+            str(avatar_path),
+            media_type="image/png",
+            filename=avatar_path.name,
+        )
+
     # Try as absolute path first
     image_path = Path(path)
     if not image_path.is_absolute():

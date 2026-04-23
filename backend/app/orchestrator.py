@@ -8,6 +8,7 @@ from typing import AsyncGenerator, List, Optional
 from app.agents.context_manager import ContextManager
 from app.agents.debater_agent import DebaterAgent
 from app.agents.host_agent import HostAgent
+from app.avatars import get_avatar_library
 from app.config import create_debate_dir
 from app.execution.turn_executor import DebaterTurnExecutor
 from app.models import (
@@ -338,7 +339,7 @@ class DebateOrchestrator:
 
                 main_count = len(debaters)
 
-                # Generate substitute debaters concurrently with images
+                # Generate substitute debaters while main debaters are ready.
                 debate_logger.info(
                     "Creating substitute debaters", event_type="create_subs_start"
                 )
@@ -352,16 +353,6 @@ class DebateOrchestrator:
                         substitute_count=3,
                     )
                 )
-
-                # Start avatar generation for main debaters
-                avatar_tasks = [
-                    asyncio.create_task(
-                        self._generate_avatar_with_event(
-                            debater, session.session_id, session.debate_dir
-                        )
-                    )
-                    for debater in debaters
-                ]
 
                 # Wait for substitutes (needed for debaters_ready event)
                 try:
@@ -379,35 +370,30 @@ class DebateOrchestrator:
                     )
                     substitutes = []
 
-                # Store substitutes in session for later use in confirm()
+                all_debaters = debaters + substitutes
+
+                # Assign checked-in local avatars. This must never call image generation.
+                try:
+                    avatars = get_avatar_library().assign_to_debaters(
+                        all_debaters, session.session_id
+                    )
+                    debate_logger.info(
+                        "Local avatars assigned",
+                        event_type="avatar_library_assigned",
+                        avatar_count=len(avatars),
+                    )
+                except Exception as exc:
+                    avatars = {}
+                    debate_logger.warning(
+                        "Local avatar assignment failed; using UI fallback",
+                        event_type="avatar_library_failed",
+                        error=str(exc),
+                    )
+
+                # Store substitutes and avatar URLs in session for drafting/confirm.
+                session.debaters = debaters
                 session.substitute_debaters = substitutes
                 self.session_store.update(session)
-
-                # Start avatar generation for substitutes too
-                sub_avatar_tasks = [
-                    asyncio.create_task(
-                        self._generate_avatar_with_event(
-                            sub, session.session_id, session.debate_dir
-                        )
-                    )
-                    for sub in substitutes
-                ]
-
-                # Await all avatars (main + substitute) BEFORE emitting debaters_ready
-                all_avatar_tasks = avatar_tasks + sub_avatar_tasks
-                avatar_results = await asyncio.gather(
-                    *all_avatar_tasks, return_exceptions=True
-                )
-
-                # Build avatars dict and update debater configs
-                avatars: dict[str, str] = {}
-                all_debaters = debaters + substitutes
-                for index, result in enumerate(avatar_results):
-                    if isinstance(result, str):
-                        debater_name = all_debaters[index].name
-                        avatars[debater_name] = result
-                        # Update the debater's avatar_url so it appears in debaters_ready
-                        all_debaters[index].avatar_url = result
 
                 # Now emit debaters_ready with complete avatar URLs
                 yield SSEEvent(

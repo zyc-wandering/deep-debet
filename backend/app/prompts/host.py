@@ -88,6 +88,15 @@ def build_debater_generation_prompt(
             .replace("[OPTIONAL USER CONTEXT BLOCK]\nUser-provided background: {user_context}\nMay inform debater design, but do not create characters that simply confirm the user's presumed answer.", user_context_block)
         )
 
+    prompt = compact_prompt(f"""
+{prompt}
+
+Output contract addition:
+- Each debater object must include a "gender" field.
+- Use one of: "male", "female", "nonbinary", "unknown".
+- Do not include an avatar id or image path; the backend will assign local avatars.
+""")
+
     return apply_output_language_override(prompt, debate_language)
 
 
@@ -144,6 +153,15 @@ Requirements:
 
 Background excerpt:
 {brief[:800]}
+""")
+
+    prompt = compact_prompt(f"""
+{prompt}
+
+Output contract addition:
+- Each substitute debater object must include a "gender" field.
+- Use one of: "male", "female", "nonbinary", "unknown".
+- Do not include an avatar id or image path; the backend will assign local avatars.
 """)
 
     return apply_output_language_override(prompt, debate_language)

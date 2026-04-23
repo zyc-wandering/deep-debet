@@ -132,9 +132,13 @@ export function useDebate() {
           deadline_at?: string | null;
           main_count?: number;
         };
+        const debaters = debaterData.debaters.map((debater) => ({
+          ...debater,
+          avatar_url: resolveImageUrl(apiBaseRef.current, debater.avatar_url) || debater.avatar_url,
+        }));
         useDebateStore.getState().setDebaters(
           debaterData.session_id,
-          debaterData.debaters,
+          debaters,
           debaterData.deadline_at ? Date.parse(debaterData.deadline_at) : null,
           debaterData.main_count,
         );

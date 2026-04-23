@@ -1,0 +1,290 @@
+[
+  {
+    "id": "east_asian_male_li_wei",
+    "src": "avatar-library/east_asian_male_li_wei.png",
+    "name": "Li Wei",
+    "ethnicity": "east_asian",
+    "skin_tone": "light",
+    "gender": "male",
+    "tags": ["policy", "finance", "academic"]
+  },
+  {
+    "id": "east_asian_male_chen_wei",
+    "src": "avatar-library/east_asian_male_chen_wei.png",
+    "name": "Chen Wei",
+    "ethnicity": "east_asian",
+    "skin_tone": "light",
+    "gender": "male",
+    "tags": ["academic", "technology", "policy"]
+  },
+  {
+    "id": "east_asian_male_hiroshi_tanaka",
+    "src": "avatar-library/east_asian_male_hiroshi_tanaka.png",
+    "name": "Hiroshi Tanaka",
+    "ethnicity": "east_asian",
+    "skin_tone": "light",
+    "gender": "male",
+    "tags": ["finance", "operator", "policy"]
+  },
+  {
+    "id": "east_asian_female_zhang_min",
+    "src": "avatar-library/east_asian_female_zhang_min.png",
+    "name": "Zhang Min",
+    "ethnicity": "east_asian",
+    "skin_tone": "light",
+    "gender": "female",
+    "tags": ["technology", "operator", "policy"]
+  },
+  {
+    "id": "east_asian_female_yuki_tanaka",
+    "src": "avatar-library/east_asian_female_yuki_tanaka.png",
+    "name": "Yuki Tanaka",
+    "ethnicity": "east_asian",
+    "skin_tone": "light",
+    "gender": "female",
+    "tags": ["academic", "policy", "finance"]
+  },
+  {
+    "id": "east_asian_female_lin_shufen",
+    "src": "avatar-library/east_asian_female_lin_shufen.png",
+    "name": "Lin Shufen",
+    "ethnicity": "east_asian",
+    "skin_tone": "medium",
+    "gender": "female",
+    "tags": ["policy", "legal", "community"]
+  },
+  {
+    "id": "south_asian_male_raj_patel",
+    "src": "avatar-library/south_asian_male_raj_patel.png",
+    "name": "Raj Patel",
+    "ethnicity": "south_asian",
+    "skin_tone": "tan",
+    "gender": "male",
+    "tags": ["operator", "technology", "finance"]
+  },
+  {
+    "id": "south_asian_male_aarav_patel",
+    "src": "avatar-library/south_asian_male_aarav_patel.png",
+    "name": "Aarav Patel",
+    "ethnicity": "south_asian",
+    "skin_tone": "tan",
+    "gender": "male",
+    "tags": ["finance", "academic", "policy"]
+  },
+  {
+    "id": "south_asian_male_aarav_mehta",
+    "src": "avatar-library/south_asian_male_aarav_mehta.png",
+    "name": "Aarav Mehta",
+    "ethnicity": "south_asian",
+    "skin_tone": "tan",
+    "gender": "male",
+    "tags": ["legal", "academic", "policy"]
+  },
+  {
+    "id": "south_asian_female_priya_mehta",
+    "src": "avatar-library/south_asian_female_priya_mehta.png",
+    "name": "Priya Mehta",
+    "ethnicity": "south_asian",
+    "skin_tone": "tan",
+    "gender": "female",
+    "tags": ["finance", "policy", "academic"]
+  },
+  {
+    "id": "south_asian_female_anya_sharma",
+    "src": "avatar-library/south_asian_female_anya_sharma.png",
+    "name": "Anya Sharma",
+    "ethnicity": "south_asian",
+    "skin_tone": "tan",
+    "gender": "female",
+    "tags": ["legal", "technology", "academic"]
+  },
+  {
+    "id": "black_african_female_amina_diallo",
+    "src": "avatar-library/black_african_female_amina_diallo.png",
+    "name": "Amina Diallo",
+    "ethnicity": "black_african",
+    "skin_tone": "dark",
+    "gender": "female",
+    "tags": ["finance", "policy", "global"]
+  },
+  {
+    "id": "black_african_female_aisha_okonkwo",
+    "src": "avatar-library/black_african_female_aisha_okonkwo.png",
+    "name": "Aisha Okonkwo",
+    "ethnicity": "black_african",
+    "skin_tone": "dark",
+    "gender": "female",
+    "tags": ["labor", "policy", "community"]
+  },
+  {
+    "id": "black_african_female_sarah_okonkwo",
+    "src": "avatar-library/black_african_female_sarah_okonkwo.png",
+    "name": "Sarah Okonkwo",
+    "ethnicity": "black_african",
+    "skin_tone": "dark",
+    "gender": "female",
+    "tags": ["academic", "policy", "global"]
+  },
+  {
+    "id": "black_african_male_julius_mbeki",
+    "src": "avatar-library/black_african_male_julius_mbeki.png",
+    "name": "Julius Mbeki",
+    "ethnicity": "black_african",
+    "skin_tone": "dark",
+    "gender": "male",
+    "tags": ["legal", "policy", "academic"]
+  },
+  {
+    "id": "black_african_male_kofi_mensah",
+    "src": "avatar-library/black_african_male_kofi_mensah.png",
+    "name": "Kofi Mensah",
+    "ethnicity": "black_african",
+    "skin_tone": "dark",
+    "gender": "male",
+    "tags": ["labor", "operator", "policy"]
+  },
+  {
+    "id": "black_african_male_omondi_juma",
+    "src": "avatar-library/black_african_male_omondi_juma.png",
+    "name": "Omondi Juma",
+    "ethnicity": "black_african",
+    "skin_tone": "dark",
+    "gender": "male",
+    "tags": ["science", "academic", "global"]
+  },
+  {
+    "id": "middle_eastern_male_ahmed_hassan",
+    "src": "avatar-library/middle_eastern_male_ahmed_hassan.png",
+    "name": "Ahmed Hassan",
+    "ethnicity": "middle_eastern",
+    "skin_tone": "tan",
+    "gender": "male",
+    "tags": ["finance", "geopolitics", "policy"]
+  },
+  {
+    "id": "middle_eastern_male_karim_jaber",
+    "src": "avatar-library/middle_eastern_male_karim_jaber.png",
+    "name": "Karim Jaber",
+    "ethnicity": "middle_eastern",
+    "skin_tone": "tan",
+    "gender": "male",
+    "tags": ["geopolitics", "security", "policy"]
+  },
+  {
+    "id": "middle_eastern_female_fatima_al_hassan",
+    "src": "avatar-library/middle_eastern_female_fatima_al_hassan.png",
+    "name": "Fatima Al-Hassan",
+    "ethnicity": "middle_eastern",
+    "skin_tone": "tan",
+    "gender": "female",
+    "tags": ["finance", "academic", "policy"]
+  },
+  {
+    "id": "middle_eastern_female_dr_fatima_al_hassan",
+    "src": "avatar-library/middle_eastern_female_dr_fatima_al_hassan.png",
+    "name": "Dr. Fatima Al-Hassan",
+    "ethnicity": "middle_eastern",
+    "skin_tone": "tan",
+    "gender": "female",
+    "tags": ["geopolitics", "academic", "policy"]
+  },
+  {
+    "id": "middle_eastern_female_layla_hamid",
+    "src": "avatar-library/middle_eastern_female_layla_hamid.png",
+    "name": "Layla Hamid",
+    "ethnicity": "middle_eastern",
+    "skin_tone": "tan",
+    "gender": "female",
+    "tags": ["community", "policy", "legal"]
+  },
+  {
+    "id": "white_european_male_lars_jensen",
+    "src": "avatar-library/white_european_male_lars_jensen.png",
+    "name": "Lars Jensen",
+    "ethnicity": "white_european",
+    "skin_tone": "light",
+    "gender": "male",
+    "tags": ["technology", "legal", "academic"]
+  },
+  {
+    "id": "white_european_male_klaus_richter",
+    "src": "avatar-library/white_european_male_klaus_richter.png",
+    "name": "Klaus Richter",
+    "ethnicity": "white_european",
+    "skin_tone": "light",
+    "gender": "male",
+    "tags": ["finance", "policy", "academic"]
+  },
+  {
+    "id": "white_european_male_liam_oconnor",
+    "src": "avatar-library/white_european_male_liam_oconnor.png",
+    "name": "Liam O'Connor",
+    "ethnicity": "white_european",
+    "skin_tone": "light",
+    "gender": "male",
+    "tags": ["finance", "operator", "market"]
+  },
+  {
+    "id": "white_european_female_elena_rossi",
+    "src": "avatar-library/white_european_female_elena_rossi.png",
+    "name": "Elena Rossi",
+    "ethnicity": "white_european",
+    "skin_tone": "light",
+    "gender": "female",
+    "tags": ["legal", "academic", "policy"]
+  },
+  {
+    "id": "white_european_female_sofia_rossi",
+    "src": "avatar-library/white_european_female_sofia_rossi.png",
+    "name": "Sofia Rossi",
+    "ethnicity": "white_european",
+    "skin_tone": "light",
+    "gender": "female",
+    "tags": ["finance", "market", "policy"]
+  },
+  {
+    "id": "white_european_female_ingrid_svensson",
+    "src": "avatar-library/white_european_female_ingrid_svensson.png",
+    "name": "Ingrid Svensson",
+    "ethnicity": "white_european",
+    "skin_tone": "light",
+    "gender": "female",
+    "tags": ["finance", "academic", "policy"]
+  },
+  {
+    "id": "latine_male_javier_mendez",
+    "src": "avatar-library/latine_male_javier_mendez.png",
+    "name": "Javier Mendez",
+    "ethnicity": "latine",
+    "skin_tone": "medium",
+    "gender": "male",
+    "tags": ["legal", "policy", "community"]
+  },
+  {
+    "id": "latine_female_sofia_mendez",
+    "src": "avatar-library/latine_female_sofia_mendez.png",
+    "name": "Sofia Mendez",
+    "ethnicity": "latine",
+    "skin_tone": "medium",
+    "gender": "female",
+    "tags": ["finance", "market", "policy"]
+  },
+  {
+    "id": "latine_female_luna_martinez",
+    "src": "avatar-library/latine_female_luna_martinez.png",
+    "name": "Luna Martinez",
+    "ethnicity": "latine",
+    "skin_tone": "medium",
+    "gender": "female",
+    "tags": ["finance", "academic", "policy"]
+  },
+  {
+    "id": "southeast_asian_female_dina_pratama",
+    "src": "avatar-library/southeast_asian_female_dina_pratama.png",
+    "name": "Dina Pratama",
+    "ethnicity": "southeast_asian",
+    "skin_tone": "tan",
+    "gender": "female",
+    "tags": ["finance", "operator", "market"]
+  }
+]

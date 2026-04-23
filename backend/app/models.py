@@ -60,6 +60,8 @@ class DebaterConfig(BaseModel):
     speaking_style: str = "direct"
     avatar_emoji: str = "🎙️"
     avatar_url: Optional[str] = None
+    gender: Optional[str] = None
+    avatar_id: Optional[str] = None
 
     @model_validator(mode="before")
     @classmethod

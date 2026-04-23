@@ -400,7 +400,8 @@ debate-ai/
 - 多语言支持
 
 # 十，接入LLM
-接入的llm使用kimi2.5，我的个人apikey：
+接入的 LLM 使用 Kimi，API key 从本地配置读取。
 
-sk-kimi-61ebC9ZqMUOvb97qGLw9M3kHbI5mzZcNZFA8YJ044yVQwja6gBDAiPwfkkA5jDOo
-
+本地配置方式（不要提交到 Git）：
+- 优先设置环境变量 `KIMI_CODE_API_KEY`
+- 或在仓库根目录的 ignored 文件 `keys.ts` 中配置 `kimi_code_api_key`

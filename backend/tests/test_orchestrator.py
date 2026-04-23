@@ -44,10 +44,14 @@ class FakeSearch(SearchProvider):
 
 
 class FakeImageService:
+    def __init__(self):
+        self.debater_avatar_calls = 0
+
     async def generate_debate_background(self, topic, debaters, session_id, debate_dir=None):
         return None
 
     async def generate_debater_avatar(self, debater, session_id, debate_dir=None):
+        self.debater_avatar_calls += 1
         return None
 
     async def generate_summary_image(self, topic, debaters, session_id, debate_dir=None):
@@ -279,6 +283,9 @@ async def test_configure_sets_deadline_persists_config_and_finishes_run(monkeypa
     }
     assert any(event.event == "debaters_ready" for event in configure_events)
     assert any(event.event == "avatars_ready" for event in configure_events)
+    assert orchestrator.image_service.debater_avatar_calls == 0
+    debaters_ready = next(event for event in configure_events if event.event == "debaters_ready")
+    assert all(d["avatar_url"].startswith("avatar-library/") for d in debaters_ready.data["debaters"])
     # configure should NOT produce a "done" event — that's confirm's job
     assert all(event.event != "done" for event in configure_events)
 

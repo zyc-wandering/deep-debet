@@ -211,8 +211,8 @@ class HostAgent:
                 language=self.debate_language,
             ),
             schema_description=(
-                "返回 JSON 数组；每个元素必须包含 name, age, ethnicity, background, stance, "
-                "personality, speaking_style, avatar_emoji 八个字段。"
+                "返回 JSON 数组；每个元素必须包含 name, age, ethnicity, gender, background, stance, "
+                "personality, speaking_style, avatar_emoji 九个字段。"
             ),
         )
 
@@ -243,8 +243,8 @@ class HostAgent:
                 language=self.debate_language,
             ),
             schema_description=(
-                "返回 JSON 数组；每个元素必须包含 name, age, ethnicity, background, stance, "
-                "personality, speaking_style, avatar_emoji 八个字段。"
+                "返回 JSON 数组；每个元素必须包含 name, age, ethnicity, gender, background, stance, "
+                "personality, speaking_style, avatar_emoji 九个字段。"
             ),
         )
         configs = [DebaterConfig(**row) for row in data[:substitute_count]]
